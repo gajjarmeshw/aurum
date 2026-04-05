@@ -10,11 +10,9 @@
   <link rel="manifest" href="/static/manifest.json">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="AURUM">
+  <meta name="apple-mobile-web-app-title" content="AURUM Pro">
   <meta name="theme-color" content="#ff8c00">
-  <meta name="mobile-web-app-capable" content="yes">
   <link rel="apple-touch-icon" href="/static/icon-192.png">
-  <link rel="apple-touch-startup-image" href="/static/icon-512.png">
 
   <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/klinecharts@8/dist/klinecharts.min.js"></script>
@@ -364,9 +362,10 @@
             3. Follow prompts to get your <strong style="color:var(--c-text);">BOT_TOKEN</strong></p>
 
             <div class="section-title">Step 2: Get Chat ID</div>
-            <p style="margin-bottom:12px;">1. Message your new bot anything<br>
+            <p style="margin-bottom:12px;">1. Message your new bot anything (or add it to a group)<br>
             2. Visit: <code style="background:rgba(255,255,255,0.05); padding:2px 6px; border-radius:4px; font-size:10px;">api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code><br>
-            3. Find <strong style="color:var(--c-text);">chat.id</strong> in the JSON response</p>
+            3. Find <strong style="color:var(--c-text);">chat.id</strong> in the JSON response<br>
+            <span style="color:var(--c-gold); font-size:11px;">💡 <b>Pro Tip:</b> You can add multiple IDs separated by commas (e.g., <code>ID1,ID2</code>) to send alerts to multiple groups/users at once. Group IDs always start with a <code>-</code>.</span></p>
 
             <div class="section-title">Step 3: Configure .env</div>
             <div style="background:rgba(0,0,0,0.4); border-radius:var(--r-md); padding:12px; font-family:'JetBrains Mono'; font-size:11px; color:var(--c-green); border:1px solid var(--c-border);">

@@ -34,7 +34,9 @@ class GoldCharts {
         }
         this.createChart();
         this.createTimeframeTabs();
-        // Auto-load candles immediately
+        
+        // Ensure data loads on startup
+        console.log('[Charts] Initializing H1 data...');
         this.fetchCandles(this.activeTimeframe);
     }
 
@@ -52,7 +54,8 @@ class GoldCharts {
     createChart() {
         if (!window.LightweightCharts) return;
 
-        const h = Math.max(this.container.clientHeight || 460, 380);
+        // Auto-size to container
+        const h = Math.max(this.container.clientHeight || 460, 340);
         this.chart = LightweightCharts.createChart(this.container, {
             width: this.container.clientWidth,
             height: h,
@@ -91,11 +94,13 @@ class GoldCharts {
             wickDownColor:  '#ff2d55',
         });
 
-        // Handle resize
+        // Handle resize - fill container height
         const resizeObserver = new ResizeObserver(entries => {
             for (let entry of entries) {
+                const newHeight = Math.max(entry.contentRect.height, 340);
                 this.chart.applyOptions({
                     width: entry.contentRect.width,
+                    height: newHeight
                 });
             }
         });

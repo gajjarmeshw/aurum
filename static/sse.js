@@ -312,12 +312,8 @@ function _setEl(id, val) {
 class GoldAnalystSSE {
     constructor() {
         // ── Instantiate chart immediately ──────────────
-        // GoldCharts auto-loads H1 candles on init
         this.charts = null;
-        if (typeof GoldCharts !== 'undefined') {
-            try { this.charts = new GoldCharts('chart-container'); }
-            catch (e) { console.warn('[SSE] GoldCharts init failed:', e); }
-        }
+        this.initCharts();
 
         this.state  = {};
         this.connect();
@@ -336,6 +332,20 @@ class GoldAnalystSSE {
                     : '❌ Telegram not configured — add BOT_TOKEN & CHAT_ID to .env';
             })
             .catch(() => {});
+    }
+
+    initCharts() {
+        if (typeof GoldCharts !== 'undefined') {
+            try {
+                this.charts = new GoldCharts('chart-container');
+                console.log('[SSE] GoldCharts instantiated.');
+            } catch (e) {
+                console.error('[SSE] GoldCharts init failed:', e);
+            }
+        } else {
+            console.warn('[SSE] GoldCharts not defined. Retrying in 500ms...');
+            setTimeout(() => this.initCharts(), 500);
+        }
     }
 
     connect() {

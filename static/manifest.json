@@ -1,27 +1,21 @@
 {
-  "name": "AURUM Analyst Pro",
+  "name": "AURUM Pro",
   "short_name": "AURUM",
-  "description": "XAUUSD Institutional ICT Analysis Terminal",
+  "description": "Institutional-grade XAUUSD ICT Analysis Terminal",
   "start_url": "/",
   "display": "standalone",
-  "orientation": "portrait",
   "background_color": "#040608",
   "theme_color": "#ff8c00",
-  "categories": ["finance", "utilities"],
   "icons": [
     {
       "src": "/static/icon-192.png",
       "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any maskable"
+      "type": "image/png"
     },
     {
       "src": "/static/icon-512.png",
       "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any maskable"
+      "type": "image/png"
     }
-  ],
-  "screenshots": [],
-  "prefer_related_applications": false
+  ]
 }

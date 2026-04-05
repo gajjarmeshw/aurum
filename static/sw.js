@@ -7,13 +7,10 @@ const CACHE = 'aurum-v1';
 
 const SHELL = [
   '/',
-  '/static/style.css?v=11',
-  '/static/charts.js?v=11',
-  '/static/backtest_player.js?v=11',
-  '/static/sse.js?v=11',
+  '/static/style.css',
+  '/static/charts.js',
+  '/static/sse.js',
   '/static/manifest.json',
-  'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap',
-  'https://cdn.jsdelivr.net/npm/klinecharts@8/dist/klinecharts.min.js',
 ];
 
 // Never cache these (live data)

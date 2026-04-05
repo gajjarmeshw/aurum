@@ -18,30 +18,40 @@ logger = logging.getLogger(__name__)
 class TelegramBot:
     def __init__(self):
         self.token = config.TELEGRAM_BOT_TOKEN
-        self.chat_id = config.TELEGRAM_CHAT_ID
-        self.enabled = bool(self.token and self.chat_id)
+        raw_chat_id = config.TELEGRAM_CHAT_ID
+        
+        # Support multiple IDs (comma-separated)
+        if raw_chat_id:
+            self.chat_ids = [cid.strip() for cid in str(raw_chat_id).split(",") if cid.strip()]
+        else:
+            self.chat_ids = []
+            
+        self.enabled = bool(self.token and self.chat_ids)
         
         if not self.enabled:
             logger.warning("Telegram Bot disabled: Missing token or chat_id in .env")
 
     def send_message(self, text: str):
-        """Send a synchronous message (via requests)."""
+        """Send a synchronous message to all configured chat IDs."""
         if not self.enabled: return
         
         url = f"https://api.telegram.org/bot{self.token}/sendMessage"
-        payload = {
-            "chat_id": self.chat_id,
-            "text": text,
-            "parse_mode": "HTML"
-        }
-        try:
-            resp = requests.post(url, json=payload, timeout=10)
-            resp.raise_for_status()
-        except Exception as e:
-            if "404" in str(e):
-                logger.error("Telegram Error (404): Invalid Token. Ensure it includes the ID prefix (e.g. 123456789:ABC...).")
-            else:
-                logger.error(f"Failed to send Telegram message: {e}")
+        
+        for chat_id in self.chat_ids:
+            payload = {
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": "HTML"
+            }
+            try:
+                resp = requests.post(url, json=payload, timeout=10)
+                resp.raise_for_status()
+                logger.info(f"Telegram message sent to {chat_id}")
+            except Exception as e:
+                if "404" in str(e):
+                    logger.error(f"Telegram Error (404) for {chat_id}: Invalid Token or ID.")
+                else:
+                    logger.error(f"Failed to send Telegram message to {chat_id}: {e}")
 
     async def send_message_async(self, text: str):
         """Send an asynchronous message."""
