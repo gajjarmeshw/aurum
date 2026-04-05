@@ -38,7 +38,10 @@ class TelegramBot:
             resp = requests.post(url, json=payload, timeout=10)
             resp.raise_for_status()
         except Exception as e:
-            logger.error(f"Failed to send Telegram message: {e}")
+            if "404" in str(e):
+                logger.error("Telegram Error (404): Invalid Token. Ensure it includes the ID prefix (e.g. 123456789:ABC...).")
+            else:
+                logger.error(f"Failed to send Telegram message: {e}")
 
     async def send_message_async(self, text: str):
         """Send an asynchronous message."""
@@ -62,11 +65,18 @@ class TelegramBot:
 
     def alert_failover(self, event: str, source: str):
         """Send feed status alert."""
+        try:
+            timestamp = config.get_ist_now().strftime('%H:%M:%S IST')
+        except AttributeError:
+            # Fallback if config isn't refreshed
+            from datetime import datetime, timezone, timedelta
+            timestamp = (datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)).strftime('%H:%M:%S IST')
+
         msg = (
             f"⚠️ <b>SYSTEM ALERT: FEED FAILOVER</b>\n\n"
             f"Event: <b>{event}</b>\n"
             f"Current Source: <b>{source}</b>\n"
-            f"Time: {config.get_ist_now().strftime('%H:%M:%S IST')}"
+            f"Time: {timestamp}"
         )
         self.send_message(msg)
 

@@ -25,7 +25,7 @@ class FeedHealth:
     @property
     def seconds_since_last_tick(self) -> float:
         if self.last_tick_time == 0:
-            return float("inf")
+            return 999999.0
         return time.time() - self.last_tick_time
 
     @property

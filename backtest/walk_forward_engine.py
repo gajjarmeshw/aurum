@@ -9,8 +9,8 @@ import logging
 import pandas as pd
 from core.indicators import compute_indicators
 from core.ict_sequence import check_ict_sequence
-from core.confluence import score_confluence
-from core.dealing_range import analyze_dealing_range
+from core.confluence import compute_confluence
+from core.dealing_range import compute_dealing_range
 from core.session import get_session_info
 import config
 
@@ -34,27 +34,27 @@ class BacktestEngine:
             hist = self.df.iloc[:i+1].to_dict('records')
             current_bar = hist[-1]
             
-            # 1. Compute Indicators
-            indicators = compute_indicators(hist)
+            # 1. Compute Indicators (provide same data for all TFs for this single-CSV engine)
+            indicators = compute_indicators(hist, hist, hist, hist)
             
             # 2. Analyze Dealing Range (using H4)
             # (In a real backtest, we'd need multi-timeframe CSVs loaded)
             # For simplicity here, we assume single timeframe for demo-engine
-            dr = analyze_dealing_range(hist) 
+            dr = compute_dealing_range([], []) # Placeholder
             
             # 3. Check ICT Sequence
-            ict = check_ict_sequence(indicators, current_bar['close'])
+            session = get_session_info([]) # mock news
+            ict = check_ict_sequence(indicators, session.to_dict(), current_bar['close'], dr.to_dict())
             
             # 4. Confluence Score
-            session = get_session_info([]) # mock news
-            score = score_confluence(indicators, ict, dr, session, current_bar['close'])
+            score = compute_confluence(indicators, ict.to_dict(), dr.to_dict(), session.to_dict(), {}, current_bar['close'])
             
             # 5. Record state
-            if score.total >= 8:
+            if score["total"] >= 8:
                 self.results.append({
                     "timestamp": current_bar['datetime'],
                     "price": current_bar['close'],
-                    "score": score.total,
+                    "score": score["total"],
                     "grade": ict.grade
                 })
                 
@@ -69,19 +69,25 @@ class BacktestEngine:
         hist = self.df.iloc[:self._current_idx+1].to_dict('records')
         current_bar = hist[-1]
         
-        indicators = compute_indicators(hist)
-        dr = analyze_dealing_range(hist)
-        ict = check_ict_sequence(indicators, current_bar['close'])
+        # 1. Compute Indicators (provide same data for all TFs for this single-CSV engine)
+        indicators = compute_indicators(hist, hist, hist, hist)
+        # 2. Analyze Dealing Range
+        dr = compute_dealing_range([], []) # Placeholder
+        
+        # 3. Check ICT Sequence
         session = get_session_info([])
-        score = score_confluence(indicators, ict, dr, session, current_bar['close'])
+        ict = check_ict_sequence(indicators, session.to_dict(), current_bar['close'], dr.to_dict())
+        
+        # 4. Confluence Score
+        score = compute_confluence(indicators, ict.to_dict(), dr.to_dict(), session.to_dict(), {}, current_bar['close'])
         
         state = {
             "candle": current_bar,
-            "score": score.total,
+            "score": score["total"],
             "grade": ict.grade,
             "indicators": {
-                "fvg": [vars(f) for f in indicators.get("fvgs_h1", [])],
-                "ob": [vars(o) for o in indicators.get("obs_m15", [])]
+                "fvg": [vars(f) for f in indicators.fvgs_h1],
+                "ob": [vars(o) for o in indicators.obs_m15]
             }
         }
         

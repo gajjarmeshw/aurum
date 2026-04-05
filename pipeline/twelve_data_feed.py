@@ -9,6 +9,7 @@ import asyncio
 import json
 import time
 import logging
+import ssl
 import websockets
 
 import config
@@ -31,10 +32,17 @@ class TwelveDataFeed:
 
     async def connect(self):
         """Connect and subscribe to XAUUSD price stream."""
+        if config.SSL_NO_VERIFY:
+            ssl_context = ssl._create_unverified_context()
+        else:
+            ssl_context = ssl.create_default_context()
+
         while self._running:
             try:
+                # Twelve Data often requires the API key in the URL for the handshake to succeed
+                url = f"{WS_URL}?apikey={config.TWELVE_DATA_API_KEY}"
                 logger.info("Twelve Data: connecting...")
-                async with websockets.connect(WS_URL, ping_interval=20) as ws:
+                async with websockets.connect(url, ping_interval=20, ssl=ssl_context) as ws:
                     self.ws = ws
                     self.connected = True
                     self._reconnect_delay = config.FEED_RECONNECT_BASE

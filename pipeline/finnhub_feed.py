@@ -7,6 +7,7 @@ Normalizes ticks to same internal format.
 
 import asyncio
 import json
+import ssl
 import time
 import logging
 import websockets
@@ -32,11 +33,16 @@ class FinnhubFeed:
 
     async def connect(self):
         """Connect and subscribe — stays in standby until activated."""
+        if getattr(config, "SSL_NO_VERIFY", False):
+            ssl_context = ssl._create_unverified_context()
+        else:
+            ssl_context = ssl.create_default_context()
+
         while self._running:
             try:
                 url = f"{WS_URL}?token={config.FINNHUB_API_KEY}"
                 logger.info("Finnhub: connecting (standby mode)...")
-                async with websockets.connect(url, ping_interval=20) as ws:
+                async with websockets.connect(url, ping_interval=20, ssl=ssl_context) as ws:
                     self.ws = ws
                     self.connected = True
                     self._reconnect_delay = config.FEED_RECONNECT_BASE

@@ -35,9 +35,12 @@ logger = logging.getLogger(__name__)
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
+import pandas as pd
+
 # Shared state (within server process)
 _cooldown = CooldownEngine()
 _last_psych_result = None
+_active_backtest = None
 
 def _get_current_account_state():
     """Sync account state from journal."""

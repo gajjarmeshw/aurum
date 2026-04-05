@@ -4,6 +4,7 @@ All constants, API keys, session windows, and thresholds.
 """
 
 import os
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -15,6 +16,9 @@ NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
+
+# ─── SSL Settings ───────────────────────────────────────────
+SSL_NO_VERIFY = os.getenv("SSL_NO_VERIFY", "false").lower() == "true"
 
 # ─── Server ─────────────────────────────────────────────────
 HOST = os.getenv("HOST", "0.0.0.0")
@@ -51,6 +55,10 @@ KILLZONES = {
 }
 
 LONDON_HANDOFF_TIME = (16, 30)  # IST — auto-generates session summary
+
+def get_ist_now():
+    """Get current time in IST (UTC+5:30)."""
+    return datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
 
 # ─── Confluence Weights (Phase 1 — Theory) ──────────────────
 CONFLUENCE_WEIGHTS = {

@@ -11,6 +11,7 @@ Runs as the main async pipeline:
 import asyncio
 import time
 import logging
+from datetime import datetime
 
 import config
 from pipeline.event_bus import EventBus
@@ -132,7 +133,7 @@ class FeedManager:
                     })
 
             # Publish health status regularly
-            self.event_bus.publish("health", self.health.to_dict())
+            self.event_bus.publish("health", self.health.get_status())
 
             # Check for session handoff auto-trigger at 4:30 PM IST (16:30)
             self._check_session_handoff()
