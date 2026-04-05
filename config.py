@@ -27,7 +27,7 @@ DEBUG = os.getenv("DEBUG", "false").lower() == "true"
 
 # ─── Instrument ─────────────────────────────────────────────
 SYMBOL = "XAUUSD"
-TWELVE_DATA_SYMBOL = ""
+TWELVE_DATA_SYMBOL = "XAU/USD"
 FINNHUB_SYMBOL = "OANDA:XAU_USD"
 
 # ─── Account Settings ───────────────────────────────────────

@@ -4,6 +4,24 @@
 
 'use strict';
 
+// ── Timeframe Management ────────────────────────────────
+function switchMainTimeframe(tf) {
+    console.log(`[UI] Switching chart to ${tf}`);
+    if (window.charts) {
+        window.charts.switchTimeframe(tf);
+    }
+    
+    // Update button states
+    document.querySelectorAll('.tf-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.id === `tf-${tf}`);
+    });
+    
+    // Update title
+    const titleMap = { 'H4': '4H', 'H1': '1H', 'M15': '15M', 'M5': '5M' };
+    const titleEl = document.getElementById('chart-title');
+    if (titleEl) titleEl.textContent = `XAUUSD / ${titleMap[tf]} Live`;
+}
+
 // ── Tab Management ─────────────────────────────────────
 const TABS = ['terminal', 'backtest', 'alerts'];
 

@@ -163,3 +163,45 @@ class CandleBuilder:
                     logger.info(f"Loaded {len(self._history[tf])} {tf} candles from disk")
                 except Exception as e:
                     logger.warning(f"Could not load {tf} candles from disk: {e}")
+
+            # If still empty after loading from disk, try seeding from backtest CSV
+            if len(self._history[tf]) == 0:
+                self._seed_from_csv(tf)
+
+    def _seed_from_csv(self, timeframe: str):
+        """Seed initial history from backtest CSV if available."""
+        import pandas as pd
+        csv_map = {
+            "M5":  "XAUUSD_5min.csv",
+            "M15": "XAUUSD_15min.csv",
+            "H1":  "XAUUSD_1h.csv",
+            "H4":  "XAUUSD_4h.csv"
+        }
+        filename = csv_map.get(timeframe)
+        if not filename: return
+        
+        csv_path = config.BASE_DIR / "backtest" / "data" / filename
+        if not csv_path.exists():
+            logger.warning(f"Seeding skipped for {timeframe}: {csv_path} not found")
+            return
+            
+        try:
+            logger.info(f"Seeding {timeframe} history from {filename}...")
+            df = pd.read_csv(csv_path).tail(config.CANDLE_HISTORY_SIZE)
+            for _, row in df.iterrows():
+                dt = pd.to_datetime(row['datetime'])
+                ts = dt.replace(tzinfo=None).timestamp()
+                candle = Candle(
+                    timestamp=ts,
+                    open=float(row['open']),
+                    high=float(row['high']),
+                    low=float(row['low']),
+                    close=float(row['close']),
+                    volume=int(row.get('volume', 100)),
+                    timeframe=timeframe,
+                    closed=True
+                )
+                self._history[timeframe].append(candle)
+            logger.info(f"Successfully seeded {len(self._history[timeframe])} {timeframe} candles")
+        except Exception as e:
+            logger.error(f"Failed to seed {timeframe} from CSV: {e}")

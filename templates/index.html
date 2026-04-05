@@ -71,8 +71,14 @@
 
         <!-- Chart Card -->
         <div class="card" style="padding:0; overflow:hidden;">
-          <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 18px; border-bottom:1px solid var(--c-border); background:rgba(255,255,255,0.015);">
-            <div class="section-title" style="margin:0;">XAUUSD / 1H Live</div>
+          <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 18px; border-bottom:1px solid var(--c-border); background:rgba(255,255,255,0.015); flex-wrap:wrap; gap:10px;">
+            <div class="section-title" id="chart-title" style="margin:0;">XAUUSD / 1H Live</div>
+            <div style="display:flex; gap:6px; flex:1; justify-content:center; min-width:200px;">
+              <button class="btn btn-secondary btn-sm tf-btn" onclick="switchMainTimeframe('H4')" id="tf-H4">H4</button>
+              <button class="btn btn-secondary btn-sm tf-btn active" onclick="switchMainTimeframe('H1')" id="tf-H1">H1</button>
+              <button class="btn btn-secondary btn-sm tf-btn" onclick="switchMainTimeframe('M15')" id="tf-M15">M15</button>
+              <button class="btn btn-secondary btn-sm tf-btn" onclick="switchMainTimeframe('M5')" id="tf-M5">M5</button>
+            </div>
             <div style="display:flex; gap:8px; align-items:center;">
               <span class="chip chip-green" id="feed-chip">● LIVE FEED</span>
             </div>
