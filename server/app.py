@@ -28,6 +28,8 @@ from core.calendar import get_todays_events, is_nfp_day
 from core.cooldown import CooldownEngine
 from core.report import generate_report
 from journal import journal
+from backtest.historical_fetch import fetch_historical_data
+import config
 from backtest import walk_forward_engine, results_analyzer
 from alerts.telegram_bot import TelegramBot
 import config
@@ -237,7 +239,7 @@ def create_app(event_bus: EventBus) -> Flask:
         """Download a generated report."""
         filepath = config.DATA_DIR / "reports" / filename
         if filepath.exists():
-            return send_file(filepath, as_attachment=True, download_name=filename)
+            return send_file(filepath, as_attachment=True, download_name=filename, mimetype='text/markdown')
         return jsonify({"error": "Report not found"}), 404
 
     @app.route("/api/backtest/run", methods=["POST"])
@@ -398,6 +400,19 @@ def create_app(event_bus: EventBus) -> Flask:
         except Exception as e:
             logger.error(f"Error reading data range: {e}")
             return jsonify({"min_date": None, "max_date": None})
+
+    @app.route("/api/backtest/refresh", methods=["POST"])
+    def refresh_backtest_data():
+        """Manually trigger historical data fetch for all timeframes."""
+        try:
+            # Fetch core timeframes required for backtesting
+            fetch_historical_data("XAU/USD", "15min", 5000)
+            fetch_historical_data("XAU/USD", "1h", 5000)
+            fetch_historical_data("XAU/USD", "4h", 2000)
+            return jsonify({"success": True, "message": "Historical data refreshed successfully."})
+        except Exception as e:
+            logger.error(f"Data refresh failed: {e}")
+            return jsonify({"success": False, "error": str(e)}), 500
 
     @app.route("/api/cooldown/confirm", methods=["POST"])
     def confirm_cooldown():

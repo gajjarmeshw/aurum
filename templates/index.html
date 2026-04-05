@@ -217,9 +217,14 @@
           </button>
         </div>
       </div>
-      <div style="font-size:11px; color:var(--c-gold); display:flex; align-items:center; gap:6px;">
-        <i class="fas fa-database"></i>
-        Available: <strong id="bt-data-min">loading...</strong> — <strong id="bt-data-max">loading...</strong>
+      <div style="font-size:11px; color:var(--c-gold); display:flex; align-items:center; justify-content:space-between; width:100%;">
+        <div style="display:flex; align-items:center; gap:6px;">
+          <i class="fas fa-database"></i>
+          Available: <strong id="bt-data-min">loading...</strong> — <strong id="bt-data-max">loading...</strong>
+        </div>
+        <button class="btn btn-secondary" style="padding:4px 10px; font-size:10px;" id="btn-refresh-data" onclick="refreshBacktestData()">
+          <i class="fas fa-sync-alt"></i> Refresh Data
+        </button>
       </div>
     </div>
 

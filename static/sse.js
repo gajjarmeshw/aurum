@@ -232,7 +232,14 @@ async function generateReport() {
         const result = await resp.json();
         if (result.success) {
             btn.innerHTML = '<i class="fas fa-download"></i> Download Report';
-            btn.onclick   = () => window.open(result.download_url, '_blank');
+            btn.onclick   = () => {
+                const link = document.createElement('a');
+                link.href = result.download_url;
+                link.download = result.filename;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            };
             btn.disabled  = false;
         } else {
             btn.innerHTML = '<i class="fas fa-file-contract"></i> Retry Report';
@@ -278,6 +285,32 @@ async function sendTestAlert(type) {
                 btn.disabled = false;
                 btn.innerHTML = btn.innerHTML.replace('<i class="fas fa-spinner fa-spin"></i> Sending...', '');
             }, 3000);
+        }
+    }
+}
+
+async function refreshBacktestData() {
+    const btn = document.getElementById('btn-refresh-data');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Refreshing...';
+    }
+
+    try {
+        const resp = await fetch('/api/backtest/refresh', { method: 'POST' });
+        const result = await resp.json();
+        if (result.success) {
+            showBanner('✅ Historical data refreshed successfully!', 'green');
+            if (typeof loadDataRange === 'function') loadDataRange(); // Refresh the date range display
+        } else {
+            showBanner('❌ Refresh failed: ' + (result.error || 'Server error'));
+        }
+    } catch (e) {
+        showBanner('❌ Network error during data refresh.');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh Data';
         }
     }
 }

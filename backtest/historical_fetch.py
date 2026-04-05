@@ -63,7 +63,12 @@ def fetch_historical_data(symbol: str, interval: str, outputsize: int = 5000):
 
 
 if __name__ == "__main__":
-    # Example usage
-    logging.basicConfig(level=logging.INFO)
+    # Example usage: python backtest/historical_fetch.py
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    
+    # Fetch core timeframes required for backtesting and H4 analysis range
     fetch_historical_data("XAU/USD", "15min", 5000)
     fetch_historical_data("XAU/USD", "1h", 5000)
+    fetch_historical_data("XAU/USD", "4h", 2000)
+    
+    print("\n✅ Initialization complete. Data saved to backtest/data/")
