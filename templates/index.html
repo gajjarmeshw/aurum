@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XAUUSD Analyst v4</title>
+    <meta name="description" content="Real-time XAUUSD trade analysis with ICT methodology">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- Alert Banner -->
+<div id="alert-banner" class="alert-banner">
+    <span class="alert-text"></span>
+</div>
+
+<!-- Header -->
+<header class="header">
+    <div class="header-left">
+        <div class="logo">◆ XAUUSD ANALYST</div>
+        <div class="price-display" id="live-price">$0.00</div>
+    </div>
+    <div class="header-right">
+        <div class="nav-tabs" style="display:flex;gap:10px;margin-right:20px;">
+            <button class="chart-tab active" onclick="switchMainTab('dashboard')">Dashboard</button>
+            <button class="chart-tab" onclick="switchMainTab('backtest')">Backtest</button>
+        </div>
+        <div id="status-badge" class="status-badge red">
+            <span class="status-dot red"></span>
+            <span class="status-text">Connecting...</span>
+        </div>
+        <div class="time-display" id="clock">--:--:-- IST</div>
+        <div id="sse-status" style="font-size:11px; color:var(--yellow);">○ Connecting...</div>
+    </div>
+</header>
+
+<!-- Info Bar -->
+<div class="info-bar">
+    <div class="info-item">
+        ATR <span class="value" id="atr-value">$0.00</span>
+    </div>
+    <div class="info-item">
+        Score <span class="value" id="confluence-score-bar">0</span>/12
+    </div>
+    <div class="info-item">
+        Grade <span class="value" id="ict-grade">—</span>
+    </div>
+    <div class="info-item">
+        Macro <span class="value" id="macro-bias">—</span>
+    </div>
+    <div class="info-item">
+        🎯 <span class="value" id="kz-timer">—</span>
+    </div>
+    <div class="feed-status">
+        <span id="feed-primary-dot" class="feed-dot disconnected"></span> Primary
+        <span id="feed-fallback-dot" class="feed-dot disconnected"></span> Fallback
+        <span>Source: <strong id="feed-source">—</strong></span>
+    </div>
+</div>
+
+<!-- Main Content -->
+<main class="main-content">
+
+    <!-- Row 1: Chart + Confluence -->
+    <div class="grid-2">
+        <!-- Live Chart -->
+        <div class="card" style="padding: 0; overflow: hidden; display: flex; flex-direction: column;">
+            <div id="chart-container" style="flex: 1; min-height: 420px;"></div>
+        </div>
+
+        <!-- Confluence Score -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">Confluence Score</span>
+                <span class="card-badge" id="trade-signal" style="background:var(--red-dim);color:var(--red);">NO TRADE</span>
+            </div>
+            <div style="display:flex;align-items:baseline;gap:8px;">
+                <span class="confluence-score" id="confluence-score">0</span>
+                <span class="confluence-max">/ 12.0</span>
+            </div>
+            <div class="confluence-bar">
+                <div class="confluence-fill" id="confluence-fill" style="width:0%"></div>
+            </div>
+            <div id="confluence-factors" style="font-size:12px;color:var(--text-secondary);font-family:'JetBrains Mono',monospace;">
+                Waiting for data...
+            </div>
+        </div>
+
+        <!-- ICT Sequence -->
+    </div>
+
+    <div class="grid-1" style="margin-bottom: 16px;">
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">ICT Sequence</span>
+                <span class="card-badge" id="ict-grade-badge" style="background:var(--bg-secondary);color:var(--text-muted);">—</span>
+            </div>
+            <div class="ict-steps" id="ict-steps" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                <div class="ict-step fail"><span class="icon">○</span> Asian range clean <span class="detail">—</span></div>
+                <div class="ict-step fail"><span class="icon">○</span> Liquidity sweep <span class="detail">—</span></div>
+                <div class="ict-step fail"><span class="icon">○</span> H1 FVG return <span class="detail">—</span></div>
+                <div class="ict-step fail"><span class="icon">○</span> M15 BOS confirmed <span class="detail">—</span></div>
+                <div class="ict-step fail"><span class="icon">○</span> M5 OB in zone <span class="detail">—</span></div>
+                <div class="ict-step fail"><span class="icon">○</span> Killzone active <span class="detail">—</span></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Row 2: Dealing Range + Key Levels + Weekly -->
+    <div class="grid-3">
+        <!-- Dealing Range -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">H4 Dealing Range</span>
+            </div>
+            <div class="level-row">
+                <span class="level-label">Range High</span>
+                <span class="level-value" id="dr-high">—</span>
+            </div>
+            <div class="level-row">
+                <span class="level-label">OTE Zone</span>
+                <span class="level-value" id="dr-ote">—</span>
+            </div>
+            <div class="level-row">
+                <span class="level-label">Equilibrium</span>
+                <span class="level-value" id="dr-eq">—</span>
+            </div>
+            <div class="level-row">
+                <span class="level-label">Range Low</span>
+                <span class="level-value" id="dr-low">—</span>
+            </div>
+            <div class="level-row" style="margin-top:8px;">
+                <span class="level-label">Position</span>
+                <span class="level-value" id="dr-position" style="color:var(--accent-gold);">—</span>
+            </div>
+        </div>
+
+        <!-- Key Levels -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">Key Levels</span>
+            </div>
+            <div class="level-row">
+                <span class="level-label">🎯 BSL Target</span>
+                <span class="level-value" id="bsl-target">—</span>
+            </div>
+            <div class="level-row">
+                <span class="level-label">📦 H1 FVG</span>
+                <span class="level-value" id="h1-fvg">—</span>
+            </div>
+            <div class="level-row">
+                <span class="level-label">📦 M15 OB</span>
+                <span class="level-value" id="m15-ob">—</span>
+            </div>
+            <div class="level-row">
+                <span class="level-label">↗ H1 BOS</span>
+                <span class="level-value" id="h1-bos">—</span>
+            </div>
+            <div class="level-row">
+                <span class="level-label">🔄 SSL</span>
+                <span class="level-value" id="ssl-level">—</span>
+            </div>
+        </div>
+
+        <!-- Weekly Tracker -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">Weekly Target</span>
+                <span class="card-badge" style="background:var(--accent-gold-dim);color:var(--accent-gold);">$300</span>
+            </div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:28px;font-weight:700;color:var(--accent-gold);margin:8px 0;">
+                $<span id="weekly-pnl">0</span>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="weekly-progress" style="width:0%"></div>
+            </div>
+            <div class="progress-label">
+                <span>$0</span>
+                <span>$300</span>
+            </div>
+            <div style="margin-top:12px;">
+                <div class="level-row">
+                    <span class="level-label">Today P&L</span>
+                    <span class="level-value" id="daily-pnl">$0</span>
+                </div>
+                <div class="level-row">
+                    <span class="level-label">Trades Today</span>
+                    <span class="level-value"><span id="trades-today">0</span>/2</span>
+                </div>
+                <div class="level-row">
+                    <span class="level-label">Edge</span>
+                    <span class="level-value" id="edge-status" style="color:var(--text-muted);">—</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Row 3: Macro + Session -->
+    <div class="grid-2">
+        <!-- Macro Context -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">Macro Context</span>
+            </div>
+            <div class="level-row">
+                <span class="level-label">DXY</span>
+                <span class="level-value" id="dxy-detail">—</span>
+            </div>
+            <div class="level-row">
+                <span class="level-label">US10Y Yield</span>
+                <span class="level-value" id="yield-detail">—</span>
+            </div>
+            <div class="level-row">
+                <span class="level-label">Sentiment</span>
+                <span class="level-value" id="sentiment-detail">—</span>
+            </div>
+            <div class="level-row" style="margin-top:8px;">
+                <span class="level-label" style="font-weight:600;">Overall Bias</span>
+                <span class="level-value" id="macro-bias-full" style="color:var(--accent-gold);">—</span>
+            </div>
+        </div>
+
+        <!-- Psychology Status + Actions -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">Trade Actions</span>
+                <span class="card-badge" id="psych-status" style="background:var(--yellow-dim);color:var(--yellow);">Not checked</span>
+            </div>
+            <div style="margin-bottom:12px;">
+                <div class="level-row">
+                    <span class="level-label">Psychology</span>
+                    <span class="level-value" id="psych-assessment">Complete check first</span>
+                </div>
+                <div class="level-row">
+                    <span class="level-label">Cooldown</span>
+                    <span class="level-value" id="cooldown-status" style="color:var(--green);">None</span>
+                </div>
+            </div>
+            <div style="display:flex;gap:10px;">
+                <button class="action-btn secondary" onclick="openPsychologyModal()" style="flex:1;">
+                    🧠 Psychology Check
+                </button>
+                <button class="action-btn primary" id="btn-generate-report" onclick="generateReport()" disabled style="flex:1;">
+                    📋 Generate Report
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Backtest Tab -->
+    <div id="backtest-tab" style="display:none;">
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">Walk-Forward Backtest</span>
+                <span class="card-badge" style="background:var(--blue-dim);color:var(--blue);">BETA</span>
+            </div>
+            <div style="display:flex;gap:16px;margin-bottom:20px;">
+                <select id="bt-timeframe" class="chart-tab" style="background:var(--bg-secondary);padding:10px;">
+                    <option value="15min">15 Minutes</option>
+                    <option value="1h">1 Hour</option>
+                    <option value="4h">4 Hours</option>
+                </select>
+                <button class="action-btn primary" onclick="runBacktest()" id="btn-run-bt" style="max-width:200px;">
+                    ▶ Run Auto Backtest
+                </button>
+                <button class="action-btn secondary" onclick="startManualBacktest()" id="btn-start-manual" style="max-width:200px;">
+                    🎮 Start Manual Player
+                </button>
+            </div>
+
+            <!-- Manual Player View -->
+            <div id="manual-player-view" style="display:none; border-top:1px solid var(--border); padding-top:20px;">
+                <div id="manual-chart-container" style="height:400px; background:var(--bg-secondary); margin-bottom:16px;"></div>
+                <div id="manual-controls" style="display:none; justify-content:center; gap:20px; align-items:center;">
+                    <div id="manual-info" class="text-secondary" style="font-family:'JetBrains Mono';">Price: $0.00 | Waiting...</div>
+                    <button class="action-btn primary" onclick="btPlayer.step()" style="width:auto; padding:10px 20px;">Next Candle ⮕</button>
+                </div>
+            </div>
+
+            <div id="bt-results" style="display:none;">
+                <div class="grid-3" id="bt-summary-grid">
+                    <!-- Dynamic summary items -->
+                </div>
+                <div style="margin-top:20px; overflow-x:auto;">
+                    <table style="width:100%; font-size:12px; border-collapse:collapse;" id="bt-trades-table">
+                        <thead>
+                            <tr style="text-align:left; color:var(--text-secondary); border-bottom:1px solid var(--border);">
+                                <th style="padding:10px;">Date</th>
+                                <th style="padding:10px;">Price</th>
+                                <th style="padding:10px;">Score</th>
+                                <th style="padding:10px;">Result</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</main>
+
+<!-- Psychology Modal -->
+<div id="psych-modal" class="modal-overlay">
+    <div class="modal">
+        <div class="modal-title">🧠 Pre-Trade Psychology Check</div>
+
+        <div class="form-group">
+            <label class="form-label">1. How are you feeling right now?</label>
+            <div class="slider-value" id="feeling-value">5</div>
+            <input type="range" id="feeling-slider" class="form-slider" min="1" max="10" value="5" oninput="updateSliderValue(this.value)">
+            <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);">
+                <span>Poor</span><span>Great</span>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <div class="toggle-row">
+                <label class="form-label" style="margin:0;">2. Did you sleep well?</label>
+                <button class="toggle active" id="toggle-sleep" onclick="toggleButton('toggle-sleep')"></button>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <div class="toggle-row">
+                <label class="form-label" style="margin:0;">3. Any financial stress today?</label>
+                <button class="toggle" id="toggle-stress" onclick="toggleButton('toggle-stress')"></button>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label">4. Last trade result?</label>
+            <div class="radio-group">
+                <label class="radio-option"><input type="radio" name="last-trade" value="won"> Won</label>
+                <label class="radio-option"><input type="radio" name="last-trade" value="lost"> Lost</label>
+                <label class="radio-option"><input type="radio" name="last-trade" value="none" checked> No trade</label>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label">5. Why do you want to trade right now?</label>
+            <div class="radio-group">
+                <label class="radio-option"><input type="radio" name="reason" value="setup_alert" checked> Setup alert fired — I'm here to execute</label>
+                <label class="radio-option"><input type="radio" name="reason" value="routine_check"> Routine session check</label>
+                <label class="radio-option"><input type="radio" name="reason" value="bored"> Bored and watching charts</label>
+                <label class="radio-option"><input type="radio" name="reason" value="recover_loss"> Want to recover a loss</label>
+                <label class="radio-option"><input type="radio" name="reason" value="confident_win"> Feeling confident after a win</label>
+            </div>
+        </div>
+
+        <div style="display:flex;gap:10px;margin-top:24px;">
+            <button class="action-btn secondary" onclick="closePsychologyModal()" style="flex:1;">Cancel</button>
+            <button class="action-btn primary" onclick="submitPsychology()" style="flex:1;">Submit Check</button>
+        </div>
+    </div>
+</div>
+
+<!-- Screenshot Checklist Modal -->
+<div id="screenshot-modal" class="modal-overlay">
+    <div class="modal">
+        <div class="modal-title">📸 TradingView Screenshot Checklist</div>
+        <div class="form-group">
+            <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 16px;">
+                Upload screenshots to journal and verify levels before generating report.
+            </p>
+            <div class="radio-group">
+                <label class="radio-option"><input type="checkbox" class="check-item"> H4 Range + OTE verified</label>
+                <label class="radio-option"><input type="checkbox" class="check-item"> H1 BOS + FVG marked</label>
+                <label class="radio-option"><input type="checkbox" class="check-item"> M15 OB + Displacement verified</label>
+                <label class="radio-option"><input type="checkbox" class="check-item"> M5 Entry + SL/TP set</label>
+                <label class="radio-option"><input type="checkbox" class="check-item"> Screenshots uploaded to Journal</label>
+            </div>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:24px;">
+            <button class="action-btn secondary" onclick="closeScreenshotModal()" style="flex:1;">Cancel</button>
+            <button class="action-btn primary" id="btn-confirm-screens" onclick="confirmScreenshots()" style="flex:1;">Confirm & Continue</button>
+        </div>
+    </div>
+</div>
+
+<script src="/static/charts.js"></script>
+<script src="/static/backtest_player.js"></script>
+<script src="/static/sse.js"></script>
+</body>
+</html>

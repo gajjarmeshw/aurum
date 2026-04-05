@@ -1,0 +1,20 @@
+# Web server
+flask==3.1.0
+flask-cors==5.0.1
+gunicorn==23.0.0
+
+# Async pipeline
+websockets==14.2
+aiohttp==3.11.11
+
+# Data + indicators
+pandas==2.2.3
+numpy==2.2.1
+
+# Utilities
+python-dotenv==1.0.1
+requests==2.32.3
+beautifulsoup4==4.12.3
+
+# Alerts
+python-telegram-bot==21.9

@@ -1,0 +1,14 @@
+[Unit]
+Description=Aurum XAUUSD Analyst v4.0
+After=network.target
+
+[Service]
+User=ubuntu
+Group=www-data
+WorkingDirectory=/home/ubuntu/aurum
+Environment="PATH=/home/ubuntu/aurum/venv/bin"
+ExecStart=/home/ubuntu/aurum/venv/bin/python main.py
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

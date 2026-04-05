@@ -1,0 +1,38 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Environment variables
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Application data
+data/
+psychology/state_history.json
+journal/trades.json
+backtest/data/
+backtest/results/
+
+# Distribution
+dist/
+build/
+*.egg-info/
+
+# Logs
+*.log
