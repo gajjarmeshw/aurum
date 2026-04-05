@@ -44,13 +44,35 @@ class SessionInfo:
         }
 
 
-def get_session_info(news_events: list[dict] | None = None) -> SessionInfo:
+def get_session_info(candles: list[dict] | None = None, news_events: list[dict] | None = None) -> SessionInfo:
     """
     Determine current session state based on IST time.
     
+    If candles are provided, uses the last candle's datetime for time reference (backtesting).
+    Otherwise uses live system clock.
+    
     news_events: list of {"time_ist": "HH:MM", "event": str, "impact": "HIGH"|"MED"|"LOW"}
     """
-    now = datetime.now(IST)
+    # Use candle time if available (for backtesting), else use live clock
+    if candles and len(candles) > 0:
+        last_candle = candles[-1]
+        dt_val = last_candle.get('datetime')
+        if dt_val is not None:
+            from datetime import datetime as dt_cls
+            import pandas as pd
+            if isinstance(dt_val, str):
+                now = pd.Timestamp(dt_val).to_pydatetime().replace(tzinfo=IST)
+            elif hasattr(dt_val, 'to_pydatetime'):
+                now = dt_val.to_pydatetime().replace(tzinfo=IST)
+            elif isinstance(dt_val, (int, float)):
+                now = datetime.fromtimestamp(dt_val, tz=IST)
+            else:
+                now = datetime.now(IST)
+        else:
+            now = datetime.now(IST)
+    else:
+        now = datetime.now(IST)
+    
     current_minutes = now.hour * 60 + now.minute
     info = SessionInfo()
     info.current_time_ist = now.strftime("%H:%M IST")

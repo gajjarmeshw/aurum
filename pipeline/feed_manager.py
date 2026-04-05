@@ -71,7 +71,16 @@ class FeedManager:
         now = datetime.now()
         if now.hour == 16 and now.minute == 30 and not self._handoff_sent_today:
             logger.info("Triggering daily session handoff.")
-            handoff_data = generate_handoff()
+            h4 = self.candle_builder.get_all_candles("H4")
+            h1 = self.candle_builder.get_all_candles("H1")
+            m15 = self.candle_builder.get_all_candles("M15")
+            m5 = self.candle_builder.get_all_candles("M5")
+            current_price = m5[-1]['close'] if m5 else 0.0
+
+            from core.indicators import compute_indicators
+            indicators = compute_indicators(h4, h1, m15, m5)
+            
+            handoff_data = generate_handoff(indicators, h1, current_price)
             self.event_bus.publish("session_handoff", handoff_data)
             self._handoff_sent_today = True
             

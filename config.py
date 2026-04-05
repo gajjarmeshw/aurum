@@ -27,7 +27,7 @@ DEBUG = os.getenv("DEBUG", "false").lower() == "true"
 
 # ─── Instrument ─────────────────────────────────────────────
 SYMBOL = "XAUUSD"
-TWELVE_DATA_SYMBOL = "XAU/USD"
+TWELVE_DATA_SYMBOL = ""
 FINNHUB_SYMBOL = "OANDA:XAU_USD"
 
 # ─── Account Settings ───────────────────────────────────────
@@ -67,15 +67,15 @@ CONFLUENCE_WEIGHTS = {
     "ict_sequence":        1.5,
     "h1_bos":              1.5,
     "ote_zone":            1.0,
-    "dxy_alignment":       1.0,
+    "dxy_alignment":       0.0,   # Disabled until DXY data feed is available
     "killzone_timing":     1.0,
     "premium_discount":    0.5,
     "atr_normal":          0.5,
     "no_news_conflict":    0.5,
 }
 CONFLUENCE_MAX = 12.0
-CONFLUENCE_MIN_LONDON_NY = 8.0
-CONFLUENCE_MIN_ASIAN = 11.0
+CONFLUENCE_MIN_LONDON_NY = 5.0
+CONFLUENCE_MIN_ASIAN = 8.0
 
 # ─── ICT Grading ────────────────────────────────────────────
 ICT_GRADE_THRESHOLDS = {
@@ -88,8 +88,8 @@ TRADEABLE_GRADES = ["A+", "A"]
 # ─── Indicator Settings ─────────────────────────────────────
 ATR_PERIOD = 14
 SWING_LOOKBACK = 5             # 5-bar pivot detection
-ATR_NORMAL_MIN = 8.0           # USD
-ATR_NORMAL_MAX = 20.0          # USD
+ATR_NORMAL_MIN = 3.0           # USD — scaled for $4600 gold H1 (was 8-20 for $2000 gold)
+ATR_NORMAL_MAX = 50.0          # USD — scaled for $4600 gold H1
 CANDLE_HISTORY_SIZE = 200      # candles per timeframe in memory
 CANDLE_PERSIST_INTERVAL = 900  # seconds (15 min)
 

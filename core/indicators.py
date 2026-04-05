@@ -342,7 +342,7 @@ def detect_bos_choch(candles: list[dict], swing_highs: list[SwingPoint],
 # ─── Liquidity Pools ────────────────────────────────────────
 
 def detect_liquidity_pools(swing_highs: list[SwingPoint], swing_lows: list[SwingPoint],
-                            current_price: float, tolerance: float = 0.5) -> list[LiquidityPool]:
+                            current_price: float, tolerance: float = 5.0) -> list[LiquidityPool]:
     """
     Equal highs/lows clusters — liquidity targets.
     tolerance: dollar range within which two levels are considered "equal".

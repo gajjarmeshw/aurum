@@ -28,10 +28,14 @@ class GoldCharts {
     }
 
     async init() {
-        // Dynamically load TradingView library
-        await this.loadScript('https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js');
+        // Library is already loaded via <script> in HTML, just ensure it's ready
+        if (!window.LightweightCharts) {
+            await this.loadScript('https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js');
+        }
         this.createChart();
         this.createTimeframeTabs();
+        // Auto-load candles immediately
+        this.fetchCandles(this.activeTimeframe);
     }
 
     loadScript(src) {
@@ -48,23 +52,24 @@ class GoldCharts {
     createChart() {
         if (!window.LightweightCharts) return;
 
+        const h = Math.max(this.container.clientHeight || 460, 380);
         this.chart = LightweightCharts.createChart(this.container, {
             width: this.container.clientWidth,
-            height: 420,
+            height: h,
             layout: {
-                background: { color: '#0a0e17' },
-                textColor: '#8899aa',
+                background: { color: '#040608' },
+                textColor: '#788496',
                 fontFamily: "'JetBrains Mono', monospace",
                 fontSize: 11,
             },
             grid: {
-                vertLines: { color: '#1e2a3a' },
-                horzLines: { color: '#1e2a3a' },
+                vertLines: { color: 'rgba(255,140,0,0.06)' },
+                horzLines: { color: 'rgba(255,140,0,0.06)' },
             },
             crosshair: {
                 mode: LightweightCharts.CrosshairMode.Normal,
-                vertLine: { color: '#f0b90b', width: 1, style: 2, labelBackgroundColor: '#f0b90b' },
-                horzLine: { color: '#f0b90b', width: 1, style: 2, labelBackgroundColor: '#f0b90b' },
+                vertLine: { color: '#ff8c00', width: 1, style: 2, labelBackgroundColor: '#ff8c00' },
+                horzLine: { color: '#ff8c00', width: 1, style: 2, labelBackgroundColor: '#ff8c00' },
             },
             rightPriceScale: {
                 borderColor: '#1e2a3a',
@@ -78,12 +83,12 @@ class GoldCharts {
         });
 
         this.candleSeries = this.chart.addCandlestickSeries({
-            upColor: '#00c853',
-            downColor: '#ff1744',
-            borderUpColor: '#00c853',
-            borderDownColor: '#ff1744',
-            wickUpColor: '#00c853',
-            wickDownColor: '#ff1744',
+            upColor:        '#39ff14',
+            downColor:      '#ff2d55',
+            borderUpColor:  '#39ff14',
+            borderDownColor:'#ff2d55',
+            wickUpColor:    '#39ff14',
+            wickDownColor:  '#ff2d55',
         });
 
         // Handle resize
@@ -146,14 +151,33 @@ class GoldCharts {
     }
 
     updateCandle(candle) {
-        if (!this.candleSeries || candle.timeframe !== this.activeTimeframe) return;
+        if (!this.candleSeries) return;
+        // Accept tick updates regardless of timeframe tag
+        const ts = Number(candle.timestamp || candle.time);
         this.candleSeries.update({
-            time: candle.timestamp,
-            open: candle.open,
-            high: candle.high,
-            low: candle.low,
+            time:  ts < 1e10 ? ts : Math.floor(ts / 1000),
+            open:  candle.open  || candle.close,
+            high:  candle.high  || candle.close,
+            low:   candle.low   || candle.close,
             close: candle.close,
         });
+    }
+
+    handleCandleUpdate(data) {
+        // Called by SSE when a closed candle arrives
+        if (data && data.candle) {
+            const c = data.candle;
+            const ts = Number(c.datetime || c.timestamp);
+            if (this.candleSeries) {
+                this.candleSeries.update({
+                    time:  ts < 1e10 ? ts : Math.floor(ts / 1000),
+                    open:  parseFloat(c.open),
+                    high:  parseFloat(c.high),
+                    low:   parseFloat(c.low),
+                    close: parseFloat(c.close),
+                });
+            }
+        }
     }
 
     // ─── Overlays ──────────────────────────────────────────

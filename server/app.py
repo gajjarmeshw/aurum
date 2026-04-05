@@ -29,7 +29,10 @@ from core.cooldown import CooldownEngine
 from core.report import generate_report
 from journal import journal
 from backtest import walk_forward_engine, results_analyzer
+from alerts.telegram_bot import TelegramBot
 import config
+
+_telegram = TelegramBot()
 
 logger = logging.getLogger(__name__)
 
@@ -109,11 +112,17 @@ def create_app(event_bus: EventBus) -> Flask:
         # Get current account state
         account = _get_current_account_state()
 
+        # Compute live indicators from candle_builder history for ATR and score
+        live_indicators = latest.get("indicator_update", {})
+        live_atr = live_indicators.get("atr_h1", 0) if live_indicators else 0
+        live_confluence = latest.get("confluence_update", {})
+        live_score = live_confluence.get("total", 0) if live_confluence else 0
+
         block = should_block_trading(
             session,
             daily_pnl=account["daily_pnl"],
             daily_loss=abs(min(0, account["daily_pnl"])),
-            confluence_score=latest.get("confluence_update", {}).get("total", 0),
+            confluence_score=live_score,
             psych_score=_last_psych_result.feeling if _last_psych_result else 10,
             cooldown_active=cooldown.active,
             is_nfp_day=is_nfp_day(),
@@ -121,6 +130,8 @@ def create_app(event_bus: EventBus) -> Flask:
 
         return jsonify({
             "price": tick.get("price", 0),
+            "atr": round(live_atr, 2),
+            "score": live_score,
             "session": session.to_dict(),
             "cooldown": cooldown.to_dict(),
             "macro_bias": macro.get("macro_bias", ""),
@@ -240,21 +251,77 @@ def create_app(event_bus: EventBus) -> Flask:
         if not data_path.exists():
             return jsonify({"error": "Historical data not found. Please fetch data first."}), 404
             
-        # 2. Run Engine
-        engine = walk_forward_engine.BacktestEngine(str(data_path), tf)
+        # 2. Run Engine with proper date filtering
+        start_date = data.get("start_date")
+        end_date = data.get("end_date")
+        engine = walk_forward_engine.BacktestEngine(str(data_path), tf, start_date=start_date, end_date=end_date)
         setups = engine.run()
         
-        # 3. Analyze
-        # For simplicity, we assume the engine uses a simulator inside.
-        # In this POC, we just return the setups count.
+        # 3. Simulate trades using real SL/TP based on ATR
         from backtest.trade_simulator import TradeSimulator
         sim = TradeSimulator()
-        # ... logic to feed setups to sim ...
         
+        sim_results = []
+        for setup in setups:
+            # Check if we can open a new trade (one at a time)
+            if sim.open_trades:
+                continue
+                
+            atr = setup.get("atr", 15.0) or 15.0
+            price = setup["price"]
+            direction = setup.get("direction", "bullish")
+            sl = price - atr if direction == "bullish" else price + atr
+            tp = price + (atr * 2) if direction == "bullish" else price - (atr * 2)
+            trade_dir = "long" if direction == "bullish" else "short"
+            
+            # Open trade at setup entry
+            sim.open_trade(setup["timestamp"], price, sl, tp, trade_dir)
+            
+            # Feed subsequent bars to see if SL or TP is hit
+            bar_start = setup["bar_index"] + 1
+            for j in range(bar_start, min(bar_start + 100, len(engine.full_df))):
+                bar = engine.full_df.iloc[j]
+                sim.update(str(bar['datetime']), bar['high'], bar['low'], bar['close'])
+                if not sim.open_trades:  # Trade closed
+                    break
+            
+            # If trade is STILL open after look-ahead, force close it
+            for open_trade in sim.open_trades[:]:
+                sim._close_trade(open_trade, setup["timestamp"], price, "open", 0.0)
+            
+            # Get the result of THIS specific trade (the last closed one)
+            if sim.closed_trades:
+                t = sim.closed_trades[-1]
+                sim_results.append({
+                    "timestamp": setup["timestamp"],
+                    "price": setup["price"],
+                    "score": setup["score"],
+                    "grade": setup["grade"],
+                    "direction": setup.get("direction", ""),
+                    "result": t.result,
+                    "pnl": round(t.pnl, 2),
+                    "exit_price": t.exit_price,
+                })
+        
+        
+        # Serialize results
+        res_dir = config.BASE_DIR / "backtest" / "results"
+        res_dir.mkdir(parents=True, exist_ok=True)
+        res_path = res_dir / "latest_backtest.csv"
+        
+        if sim_results:
+            res_df = pd.DataFrame(sim_results)
+            res_df.to_csv(res_path, index=False)
+        elif res_path.exists():
+            res_path.unlink()
+        
+        summary = sim.get_summary()
         return jsonify({
             "success": True,
             "setups_found": len(setups),
-            "msg": f"Backtest complete on {tf}. Found {len(setups)} setups."
+            "trades_simulated": len(sim_results),
+            "summary": summary,
+            "msg": f"Backtest complete on {tf}. {len(sim_results)} trades simulated: {summary.get('wins',0)}W / {summary.get('losses',0)}L. PnL: {summary.get('total_pnl','$0')}"
         })
 
     @app.route("/api/backtest/manual/start", methods=["POST"])
@@ -263,14 +330,30 @@ def create_app(event_bus: EventBus) -> Flask:
         global _active_backtest
         data = request.get_json()
         tf = data.get("timeframe", "15min")
+        start_date = data.get("start_date")
+        end_date = data.get("end_date")
+        
         data_path = config.BASE_DIR / "backtest" / "data" / f"XAUUSD_{tf}.csv"
         
         if not data_path.exists():
             return jsonify({"error": "Historical data not found."}), 404
             
-        _active_backtest = walk_forward_engine.BacktestEngine(str(data_path), tf)
+        _active_backtest = walk_forward_engine.BacktestEngine(
+            str(data_path), 
+            tf, 
+            start_date=start_date, 
+            end_date=end_date
+        )
+        
+        if _active_backtest.total_bars == 0:
+            _active_backtest = None
+            return jsonify({"error": f"No historical data found for the selected range in {tf} data."}), 400
+            
         _active_backtest.mode = "manual"
-        return jsonify({"success": True})
+        return jsonify({
+            "success": True,
+            "total_bars": _active_backtest.total_bars
+        })
 
     @app.route("/api/backtest/step")
     def backtest_step():
@@ -278,8 +361,15 @@ def create_app(event_bus: EventBus) -> Flask:
         global _active_backtest
         if not _active_backtest:
             return jsonify({"error": "No active backtest session"}), 400
-        
+            
         state = _active_backtest.step()
+        if not state:
+            return jsonify({"error": "End of data"}), 404
+            
+        # Include confluence and ict checklist in the state
+        state["confluence"] = _active_backtest.get_current_confluence()
+        state["ict_checklist"] = _active_backtest.get_current_ict_checklist()
+            
         return jsonify(state)
 
     @app.route("/api/backtest/latest")
@@ -288,13 +378,68 @@ def create_app(event_bus: EventBus) -> Flask:
         res_path = config.BASE_DIR / "backtest" / "results" / "latest_backtest.csv"
         if res_path.exists():
             df = pd.read_csv(res_path)
+            # Replace NaNs with empty strings to prevent invalid JSON (NaN) crashing the frontend
+            df = df.fillna("")
             return jsonify(df.to_dict('records'))
         return jsonify([])
+
+    @app.route("/api/backtest/data-range")
+    def get_backtest_data_range():
+        """Return the available date range from the 15min CSV for display in the UI."""
+        data_path = config.BASE_DIR / "backtest" / "data" / "XAUUSD_15min.csv"
+        if not data_path.exists():
+            return jsonify({"min_date": None, "max_date": None})
+        try:
+            df = pd.read_csv(data_path, usecols=["datetime"])
+            df["datetime"] = pd.to_datetime(df["datetime"])
+            min_d = df["datetime"].min().strftime("%Y-%m-%d")
+            max_d = df["datetime"].max().strftime("%Y-%m-%d")
+            return jsonify({"min_date": min_d, "max_date": max_d})
+        except Exception as e:
+            logger.error(f"Error reading data range: {e}")
+            return jsonify({"min_date": None, "max_date": None})
 
     @app.route("/api/cooldown/confirm", methods=["POST"])
     def confirm_cooldown():
         """Confirm continuation after $35 daily loss warning."""
         _cooldown.confirm_continue()
         return jsonify({"confirmed": True})
+
+    @app.route("/api/alerts/health")
+    def alerts_health():
+        """Check if Telegram bot is configured."""
+        return jsonify({"telegram": _telegram.enabled})
+
+    @app.route("/api/alerts/test", methods=["POST"])
+    def test_alert():
+        """Send a test Telegram alert of the specified type."""
+        data = request.get_json() or {}
+        alert_type = data.get("type", "setup")
+
+        if not _telegram.enabled:
+            return jsonify({"success": False, "error": "Telegram not configured. Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to .env"}), 400
+
+        try:
+            if alert_type == "setup":
+                _telegram.alert_setup(score=9.0, grade="A+", price=3320.50, killzone="NY Open")
+            elif alert_type == "failover":
+                _telegram.alert_failover("failover", "finnhub-fallback")
+            elif alert_type == "edge_decay":
+                _telegram.alert_edge_decay(win_rate=35.0)
+            elif alert_type == "handoff":
+                _telegram.alert_handoff(
+                    "📋 <b>AURUM — London→NY Handoff Report</b>\n\n"
+                    "Session: <b>London Close / NY Open</b>\n"
+                    "Bias: <b>Bullish (ICT OTE + FVG aligned)</b>\n"
+                    "Key Levels: BSL at $3340 | OTE Zone $3305–$3315\n\n"
+                    "Manual test alert from Aurum Pro."
+                )
+            else:
+                return jsonify({"success": False, "error": f"Unknown alert type: {alert_type}"}), 400
+
+            return jsonify({"success": True})
+        except Exception as e:
+            logger.error(f"Alert test failed: {e}")
+            return jsonify({"success": False, "error": str(e)}), 500
 
     return app

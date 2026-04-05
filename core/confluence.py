@@ -45,12 +45,22 @@ def compute_confluence(indicators: IndicatorResult, ict_result: dict,
 
     # 3. ICT sequence grade
     grade = ict_result.get("grade", "None")
-    ict_pass = grade in config.TRADEABLE_GRADES
+    steps = ict_result.get("steps_passed", 0)
+    
+    # Scale score based on grade quality
+    ict_score = 0.0
+    if grade == "A+":
+        ict_score = w["ict_sequence"]
+    elif grade == "A":
+        ict_score = w["ict_sequence"] * 0.8  # 1.2/1.5
+    elif grade == "B":
+        ict_score = w["ict_sequence"] * 0.5  # 0.75/1.5
+        
     factors["ict_sequence"] = {
         "weight": w["ict_sequence"],
-        "score": w["ict_sequence"] if ict_pass else 0.0,
-        "status": "✅" if ict_pass else "❌",
-        "detail": f"Grade {grade} ({ict_result.get('steps_passed', 0)}/6)",
+        "score": round(ict_score, 2),
+        "status": "✅" if steps >= 4 else ("⚠️" if steps >= 3 else "❌"),
+        "detail": f"Grade {grade} ({steps}/6)",
     }
 
     # 4. H1 BOS confirmed

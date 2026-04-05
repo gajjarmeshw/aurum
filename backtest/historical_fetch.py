@@ -65,5 +65,5 @@ def fetch_historical_data(symbol: str, interval: str, outputsize: int = 5000):
 if __name__ == "__main__":
     # Example usage
     logging.basicConfig(level=logging.INFO)
-    fetch_historical_data("XAU/USD", "15min", 1000)
-    fetch_historical_data("XAU/USD", "1h", 1000)
+    fetch_historical_data("XAU/USD", "15min", 5000)
+    fetch_historical_data("XAU/USD", "1h", 5000)

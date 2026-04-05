@@ -87,7 +87,7 @@ def check_ict_sequence(indicators: IndicatorResult, session_info: dict,
     elif indicators.liquidity_pools:
         # Check if any pool is near current price (within $2)
         for pool in indicators.liquidity_pools:
-            if pool.type == target_type and abs(pool.price - current_price) < 2.0:
+            if pool.type == target_type and abs(pool.price - current_price) < 15.0:
                 step2.passed = True
                 step2.detail = f"{target_type} @ ${pool.price:.2f} near price"
                 break

@@ -52,9 +52,11 @@ class TradeSimulator:
         for trade in self.open_trades[:]:
             # 1. Check Stop Loss
             if trade.direction == "long" and low <= trade.sl:
-                self._close_trade(trade, time, trade.sl, "loss", (trade.sl - trade.entry_price) * 100 * trade.lots)
+                result = "be" if trade.sl == trade.entry_price else "loss"
+                self._close_trade(trade, time, trade.sl, result, (trade.sl - trade.entry_price) * 100 * trade.lots)
             elif trade.direction == "short" and high >= trade.sl:
-                self._close_trade(trade, time, trade.sl, "loss", (trade.entry_price - trade.sl) * 100 * trade.lots)
+                result = "be" if trade.sl == trade.entry_price else "loss"
+                self._close_trade(trade, time, trade.sl, result, (trade.entry_price - trade.sl) * 100 * trade.lots)
             
             # 2. Check Take Profit
             elif trade.direction == "long" and high >= trade.tp:
