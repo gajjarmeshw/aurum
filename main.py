@@ -17,10 +17,15 @@ import asyncio
 from pipeline.event_bus import EventBus
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s [%(processName)s] %(levelname)s %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+# Silence noisy third-party loggers
+logging.getLogger("websockets").setLevel(logging.INFO)
+logging.getLogger("urllib3").setLevel(logging.INFO)
+logging.getLogger("werkzeug").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 
@@ -52,7 +57,11 @@ def main():
     logger.info("  XAUUSD ANALYST v4.0 — Starting")
     logger.info("═" * 50)
 
-    event_bus = EventBus()
+    # Use a Manager to create a shared dictionary for the EventBus cache
+    # This prevents the 'cannot pickle weakref' error when passing EventBus to child processes
+    manager = multiprocessing.Manager()
+    shared_latest = manager.dict()
+    event_bus = EventBus(latest_dict=shared_latest)
 
     p1 = multiprocessing.Process(
         target=start_pipeline,

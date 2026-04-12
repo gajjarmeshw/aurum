@@ -16,7 +16,7 @@ from core.indicators import compute_indicators
 from core.ict_sequence import check_ict_sequence
 from core.confluence import compute_confluence
 from core.dealing_range import compute_dealing_range
-from core.session import get_session_info
+from core.session import get_session_info, get_session_info_from_timestamp
 import config
 
 logger = logging.getLogger(__name__)
@@ -92,7 +92,13 @@ class BacktestEngine:
             
         logger.info(f"Starting walk-forward backtest... Range: {self._current_idx} to {self._end_idx}")
         
-        last_setup_idx = -999  # Track index of last recorded setup for deduplication
+        last_m15_ts = None  # Fix 3: Track last setup's M15 candle timestamp for dedup
+        
+        # Diagnostic counters
+        total_scanned = 0
+        skipped_below_threshold = 0
+        skipped_no_grade = 0
+        skipped_duplicate = 0
         
         for i in range(self._current_idx, self._end_idx):
             # Take up to 1000 bars for warm-up history to cover Higher Timeframes
@@ -104,6 +110,9 @@ class BacktestEngine:
             
             # Resample for higher timeframes
             hist_df.set_index('datetime', inplace=True)
+            m15_df = hist_df.resample('15min').agg({
+                'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'timestamp': 'last'
+            }).dropna().reset_index()
             h1_df = hist_df.resample('1h').agg({
                 'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'timestamp': 'last'
             }).dropna().reset_index()
@@ -111,39 +120,71 @@ class BacktestEngine:
                 'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'timestamp': 'last'
             }).dropna().reset_index()
             hist_df.reset_index(inplace=True)
-
-            hist_m15 = hist_df.to_dict('records')
+            
+            hist_m15 = m15_df.to_dict('records')
             hist_h1 = h1_df.to_dict('records')
             hist_h4 = h4_df.to_dict('records')
             current_bar = hist_m15[-1]
             
             # Indicators benefit from full hist_df
-            indicators = compute_indicators(hist_h4, hist_h1, hist_m15, hist_m15)
+            indicators = compute_indicators(hist_h4, hist_h1, hist_m15, hist_df.to_dict('records'))
             dr = compute_dealing_range(indicators.swing_highs_h4, indicators.swing_lows_h4) 
-            session = get_session_info(hist_m15) 
+            session = get_session_info_from_timestamp(current_bar['datetime']) 
             ict = check_ict_sequence(indicators, session.to_dict(), current_bar['close'], dr.to_dict())
             score = compute_confluence(indicators, ict.to_dict(), dr.to_dict(), session.to_dict(), {}, current_bar['close'])
             
-            if score["total"] >= config.CONFLUENCE_MIN_LONDON_NY:
-                # Deduplicate: enforce minimum 4-bar (60 min) gap between signals
-                if i - last_setup_idx < 4:
-                    continue
-                last_setup_idx = i
-                atr = indicators.atr_h1
-                self.results.append({
-                    "timestamp": str(current_bar['datetime']),
-                    "price": current_bar['close'],
-                    "score": score["total"],
-                    "grade": ict.grade,
-                    "direction": ict.direction,
-                    "atr": round(atr, 2),
-                    # Provide current bar OHLC for sim to consume
-                    "high": current_bar['high'],
-                    "low": current_bar['low'],
-                    "bar_index": i,
-                })
+            total_scanned += 1
+            
+            # ── FIX 1: Confluence Threshold Gate ─────────────────────
+            # Check if either Swing or Scalp mode validates.
+            # Use SWING_SCORE_MIN_BACKTEST (not LIVE) for swing validity in backtest.
+            swing_score_val = score.get("swing", {}).get("score", 0)
+            swing_valid = swing_score_val >= config.SWING_SCORE_MIN_BACKTEST
+            scalp_valid = score.get("scalp", {}).get("is_valid", False)
+            
+            if not swing_valid and not scalp_valid:
+                skipped_below_threshold += 1
+                continue
+            
+            # ── FIX 5: Legacy Grade Filter Removed ───────────────────
+            # We no longer filter by ict.grade since Scalp Mode doesn't require A/B grades.
+            
+            # ── FIX 3: M15 Candle Deduplication ──────────────────────
+            # Use the M15 candle datetime (open time) to prevent multiple triggers
+            # from M5 sub-bars within the same parent M15 candle
+            m15_candle_dt = current_bar.get('datetime')
+            if m15_candle_dt is not None and m15_candle_dt == last_m15_ts:
+                skipped_duplicate += 1
+                continue
+            last_m15_ts = m15_candle_dt
                 
+            # Use unified to_dict for metadata parity (size, status, proximity)
+            levels = indicators.to_dict()
+            
+            self.results.append({
+                "timestamp": int(current_bar['datetime'].timestamp()),
+                "price": current_bar['close'],
+                "swing_score": score.get("swing", {}).get("score", 0),
+                "is_swing": swing_valid,
+                "is_scalp": scalp_valid,
+                "direction": ict.direction,
+                "atr": round(indicators.atr_h1, 2),
+                "adx": round(float(indicators.adx or 0), 2),
+                "action": ict.setup_status,
+                "high": current_bar['high'],
+                "low": current_bar['low'],
+                "bar_index": i,
+                "session": session.to_dict(),
+                "levels": levels,
+                "raw_score": score  # pass the whole object for simulation flexibility
+            })
+                
+        logger.info(f"Backtest scan complete: {total_scanned} bars scanned, "
+                     f"{skipped_below_threshold} below threshold, "
+                     f"{skipped_duplicate} duplicates, "
+                     f"{len(self.results)} setups recorded")
         return self.results
+
 
     def step(self):
         """Single step for manual mode."""
@@ -154,24 +195,26 @@ class BacktestEngine:
         
         # Resample for higher timeframes
         hist_df.set_index('datetime', inplace=True)
+        m15_df = hist_df.resample('15min').agg({
+            'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'timestamp': 'last'
+        }).dropna().reset_index()
         h1_df = hist_df.resample('1h').agg({
             'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'timestamp': 'last'
         }).dropna().reset_index()
-        
         h4_df = hist_df.resample('4h').agg({
             'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'timestamp': 'last'
         }).dropna().reset_index()
         hist_df.reset_index(inplace=True)
 
-        hist_m15 = hist_df.to_dict('records')
+        hist_m15 = m15_df.to_dict('records')
         hist_h1 = h1_df.to_dict('records')
         hist_h4 = h4_df.to_dict('records')
-        current_bar = hist_m15[-1]
+        current_bar = hist_df.iloc[-1]
         
-        # All required indicators
-        indicators = compute_indicators(hist_h4, hist_h1, hist_m15, hist_m15)
+        # User Fix: Align indicator call with live feed (4 TFs)
+        indicators = compute_indicators(hist_h4, hist_h1, hist_m15, hist_df.to_dict('records'))
         dr = compute_dealing_range(indicators.swing_highs_h4, indicators.swing_lows_h4)
-        session = get_session_info(hist_m15)
+        session = get_session_info_from_timestamp(current_bar['datetime'])
         
         # ICT and Confluence
         self._last_ict = check_ict_sequence(indicators, session.to_dict(), current_bar['close'], dr.to_dict())
@@ -194,26 +237,8 @@ class BacktestEngine:
                 "end": self._end_idx - self._start_idx,
                 "total": self.total_bars
             },
-            "indicators": {
-                "fvg": [
-                    {
-                        "start_time": f.timestamp,
-                        "end_time": candle_time,
-                        "high": f.high,
-                        "low": f.low,
-                        "direction": f.direction
-                    } for f in indicators.fvgs_h1
-                ],
-                "ob": [
-                    {
-                        "start_time": o.timestamp,
-                        "end_time": candle_time,
-                        "high": o.high,
-                        "low": o.low,
-                        "direction": o.direction
-                    } for o in indicators.obs_m15
-                ]
-            }
+            # User Fix: Use unified indicators metadata to match live dashboard
+            "levels": indicators.to_dict()
         }
         
         self._current_idx += 1
@@ -233,11 +258,11 @@ class BacktestEngine:
 
     def get_current_confluence(self):
         if not hasattr(self, '_last_confluence'): return []
-        # Extract factors with names for the UI list
         factors = []
-        for key, val in self._last_confluence.get("breakdown", {}).items():
+        for key, val in self._last_confluence.get("factors", {}).items():
             factors.append({
-                "name": key.replace('_', ' ').capitalize(),
-                "score": val
+                "name": key.replace('_', ' ').title(),
+                "score": val.get("score", 0.0),
+                "status": val.get("status", "❌")
             })
         return factors

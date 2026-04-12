@@ -42,7 +42,8 @@ class TwelveDataFeed:
                 # Twelve Data often requires the API key in the URL for the handshake to succeed
                 url = f"{WS_URL}?apikey={config.TWELVE_DATA_API_KEY}"
                 logger.info("Twelve Data: connecting...")
-                async with websockets.connect(url, ping_interval=20, ssl=ssl_context) as ws:
+                # Set aggressive ping to keep connection alive and detect drops fast
+                async with websockets.connect(url, ping_interval=10, ping_timeout=10, ssl=ssl_context) as ws:
                     self.ws = ws
                     self.connected = True
                     self._reconnect_delay = config.FEED_RECONNECT_BASE

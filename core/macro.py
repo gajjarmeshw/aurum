@@ -38,37 +38,56 @@ def fetch_macro_data() -> dict:
 
 
 def _fetch_dxy() -> dict:
-    """Fetch DXY (US Dollar Index) direction from Twelve Data."""
+    """Fetch DXY (US Dollar Index) direction from Twelve Data with fallbacks."""
+    for symbol in ["DX-Y.NYB", "DXY"]:
+        try:
+            url = "https://api.twelvedata.com/time_series"
+            params = {
+                "symbol": symbol,
+                "interval": "1h",
+                "outputsize": 5,
+                "apikey": config.TWELVE_DATA_API_KEY,
+            }
+            resp = requests.get(url, params=params, timeout=10)
+            data = resp.json()
+
+            if "values" in data and len(data["values"]) >= 2:
+                latest = float(data["values"][0]["close"])
+                prev = float(data["values"][1]["close"])
+                change = latest - prev
+                pct = (change / prev) * 100 if prev else 0
+                direction = "falling" if change < 0 else "rising"
+                aligned = change < 0  # DXY falling = gold tailwind
+                return {
+                    "value": round(latest, 2),
+                    "change": round(change, 2),
+                    "pct": round(pct, 2),
+                    "direction": direction,
+                    "aligned": aligned,
+                    "detail": f"DXY {direction} {abs(pct):.1f}% → {'Gold tailwind ✅' if aligned else 'Gold headwind ⚠️'}",
+                }
+        except:
+            continue
+
+    # Fallback: EUR/USD Inversion (Highly correlated inverse of DXY)
     try:
         url = "https://api.twelvedata.com/time_series"
-        params = {
-            "symbol": "DXY",
-            "interval": "1h",
-            "outputsize": 5,
-            "apikey": config.TWELVE_DATA_API_KEY,
-        }
+        params = {"symbol": "EUR/USD", "interval": "1h", "outputsize": 5, "apikey": config.TWELVE_DATA_API_KEY}
         resp = requests.get(url, params=params, timeout=10)
         data = resp.json()
-
         if "values" in data and len(data["values"]) >= 2:
             latest = float(data["values"][0]["close"])
             prev = float(data["values"][1]["close"])
             change = latest - prev
-            pct = (change / prev) * 100 if prev else 0
-
-            direction = "falling" if change < 0 else "rising"
-            aligned = change < 0  # DXY falling = gold tailwind
-
+            # EUR/USD rising = DXY falling = Gold Tailwind
+            aligned = change > 0
+            direction = "falling (EUR/USD fallback)" if aligned else "rising (EUR/USD fallback)"
             return {
-                "value": round(latest, 2),
-                "change": round(change, 2),
-                "pct": round(pct, 2),
-                "direction": direction,
-                "aligned": aligned,
-                "detail": f"DXY {direction} {abs(pct):.1f}% → {'Gold tailwind ✅' if aligned else 'Gold headwind ⚠️'}",
+                "value": "Proxy", "direction": direction, "aligned": aligned,
+                "detail": f"DXY {direction} → {'Gold tailwind ✅' if aligned else 'Gold headwind ⚠️'}"
             }
-    except Exception as e:
-        logger.warning(f"DXY fetch failed: {e}")
+    except:
+        pass
 
     return {"value": 0, "direction": "unknown", "aligned": False, "detail": "DXY data unavailable"}
 

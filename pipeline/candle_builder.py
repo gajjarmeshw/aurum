@@ -134,6 +134,15 @@ class CandleBuilder:
         """Align timestamp to the start of its candle period."""
         return float(int(ts) // period * period)
 
+    def _is_holiday_flat(self, candle: Candle) -> bool:
+        """Check if candle is a flat weekend candle."""
+        from datetime import datetime, timezone
+        dt = datetime.fromtimestamp(candle.timestamp, tz=timezone.utc)
+        # Weekends: Saturday and most of Sunday
+        is_weekend = dt.weekday() == 5 or (dt.weekday() == 6 and dt.hour < 22)
+        is_flat = candle.open == candle.close == candle.high == candle.low
+        return is_weekend and (is_flat or candle.volume <= 1)
+
     def _persist_to_disk(self):
         """Save current candle state to disk for crash recovery."""
         try:
@@ -172,10 +181,10 @@ class CandleBuilder:
         """Seed initial history from backtest CSV if available."""
         import pandas as pd
         csv_map = {
-            "M5":  "XAUUSD_5min.csv",
-            "M15": "XAUUSD_15min.csv",
-            "H1":  "XAUUSD_1h.csv",
-            "H4":  "XAUUSD_4h.csv"
+            "M5":  f"{config.SYMBOL}_5min.csv",
+            "M15": f"{config.SYMBOL}_15min.csv",
+            "H1":  f"{config.SYMBOL}_1h.csv",
+            "H4":  f"{config.SYMBOL}_4h.csv"
         }
         filename = csv_map.get(timeframe)
         if not filename: return
@@ -187,10 +196,20 @@ class CandleBuilder:
             
         try:
             logger.info(f"Seeding {timeframe} history from {filename}...")
-            df = pd.read_csv(csv_path).tail(config.CANDLE_HISTORY_SIZE)
+            df = pd.read_csv(csv_path)
+            if df.empty: return
+            
+            # STALENESS CHECK: Don't load if data is from months ago (prevents 2025 ghost data)
+            from datetime import datetime, timezone as dt_timezone
+            last_bar_dt = pd.to_datetime(df.iloc[-1]['datetime'])
+            if (datetime.now() - last_bar_dt.replace(tzinfo=None)).days > 30:
+                logger.warning(f"CSV data for {timeframe} is stale (last bar: {last_bar_dt}). Ignoring.")
+                return
+                
+            df = df.tail(config.CANDLE_HISTORY_SIZE)
             for _, row in df.iterrows():
-                dt = pd.to_datetime(row['datetime'])
-                ts = dt.replace(tzinfo=None).timestamp()
+                dt = pd.to_datetime(row['datetime']).replace(tzinfo=dt_timezone.utc)
+                ts = dt.timestamp()
                 candle = Candle(
                     timestamp=ts,
                     open=float(row['open']),
@@ -201,7 +220,8 @@ class CandleBuilder:
                     timeframe=timeframe,
                     closed=True
                 )
-                self._history[timeframe].append(candle)
+                if not self._is_holiday_flat(candle):
+                    self._history[timeframe].append(candle)
             logger.info(f"Successfully seeded {len(self._history[timeframe])} {timeframe} candles")
         except Exception as e:
             logger.error(f"Failed to seed {timeframe} from CSV: {e}")

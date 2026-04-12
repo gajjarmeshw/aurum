@@ -32,6 +32,10 @@ def get_todays_events() -> list[dict]:
 
     try:
         events = _scrape_forex_factory()
+        if not events:
+            logger.info("ForexFactory failed or empty. Trying MyFXBook RSS failover...")
+            events = _fetch_from_myfxbook()
+            
         _cache["events"] = events
         _cache["last_fetch"] = now
         return events
@@ -44,11 +48,17 @@ def _scrape_forex_factory() -> list[dict]:
     """Scrape ForexFactory calendar for today's events."""
     url = "https://www.forexfactory.com/calendar"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
-        "Referer": "https://www.google.com/",
-        "Cache-Control": "max-age=0",
+        "Accept-Encoding": "gzip, deflate, br",
+        "DNT": "1",
+        "Connection": "keep-alive",
+        "Upgrade-In-Special-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
     }
 
     try:
@@ -102,8 +112,59 @@ def _scrape_forex_factory() -> list[dict]:
         except Exception:
             continue
 
-    logger.info(f"Calendar: {len(events)} USD high/med impact events today")
+    logger.info(f"ForexFactory: {len(events)} USD high/med impact events today")
     return events
+
+
+def _fetch_from_myfxbook() -> list[dict]:
+    """Fallback fetcher using MyFXBook's public RSS calendar feed."""
+    url = "https://www.myfxbook.com/rss/forex-calendar.xml"
+    try:
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        
+        # Simple string-based XML parsing to avoid extra dependencies
+        soup = BeautifulSoup(resp.text, "xml")
+        items = soup.find_all("item")
+        
+        events = []
+        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        
+        for item in items:
+            title = item.title.text if item.title else ""
+            desc = item.description.text if item.description else ""
+            
+            # Format usually: "USD - High - Event Name"
+            if "USD" not in title: continue
+            
+            impact = "LOW"
+            if "High" in title: impact = "HIGH"
+            elif "Medium" in title: impact = "MED"
+            else: continue # Skip low impact
+            
+            # Extract time (MyFXBook RSS uses UTC)
+            pub_date = item.pubDate.text if item.pubDate else ""
+            # Simple UTC to IST (+5:30)
+            ist_time = ""
+            if pub_date:
+                try:
+                    # e.g. "Mon, 06 Apr 2026 12:30:00 GMT"
+                    dt = datetime.strptime(pub_date, "%a, %d %b %Y %H:%M:%S %Z")
+                    dt_ist = dt + timedelta(hours=5, minutes=30)
+                    ist_time = dt_ist.strftime("%H:%M")
+                except: pass
+                
+            events.append({
+                "time_ist": ist_time,
+                "event": title.split("-")[-1].strip(),
+                "impact": impact,
+                "currency": "USD",
+            })
+            
+        return events
+    except Exception as e:
+        logger.warning(f"MyFXBook failover failed: {e}")
+        return []
 
 
 def _convert_et_to_ist(time_str: str) -> str:

@@ -24,7 +24,7 @@ class SSEManager:
         self._clients: list[queue.Queue] = []
         self._lock = threading.Lock()
         self._running = True
-        self._latest_state: dict = {}
+        self._latest_state: dict = self.event_bus.get_all_latest()
 
         # Start background thread to bridge EventBus → SSE clients
         self._thread = threading.Thread(target=self._relay_loop, daemon=True)
@@ -38,7 +38,7 @@ class SSEManager:
         if self._latest_state:
             try:
                 client_queue.put_nowait({
-                    "event": "state",
+                    "event": "full_state",
                     "data": self._latest_state,
                 })
             except queue.Full:

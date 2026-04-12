@@ -26,7 +26,11 @@ Thumbs.db
 data/
 psychology/state_history.json
 journal/trades.json
-backtest/data/
+# backtest/data/ — keep CSVs tracked so EC2 deploys have seed data
+!backtest/data/
+!backtest/data/*.csv
+backtest/data/*.json
+backtest/data/results/
 backtest/results/
 
 # Distribution

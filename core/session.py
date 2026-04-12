@@ -12,7 +12,7 @@ import config
 
 logger = logging.getLogger(__name__)
 
-IST = timezone(timedelta(hours=5, minutes=30))
+IST = config.IST
 
 
 @dataclass
@@ -26,6 +26,9 @@ class SessionInfo:
     session_label: str = ""
     is_dead_zone: bool = False
     is_avoid_zone: bool = False
+    is_london_killzone: bool = False
+    is_ny_killzone: bool = False
+    is_asian_session: bool = False
     news_conflict: bool = False
     news_detail: str = ""
 
@@ -39,6 +42,9 @@ class SessionInfo:
             "session_label": self.session_label,
             "is_dead_zone": self.is_dead_zone,
             "is_avoid_zone": self.is_avoid_zone,
+            "is_london_killzone": self.is_london_killzone,
+            "is_ny_killzone": self.is_ny_killzone,
+            "is_asian_session": self.is_asian_session,
             "news_conflict": self.news_conflict,
             "news_detail": self.news_detail,
         }
@@ -47,32 +53,26 @@ class SessionInfo:
 def get_session_info(candles: list[dict] | None = None, news_events: list[dict] | None = None) -> SessionInfo:
     """
     Determine current session state based on IST time.
-    
-    If candles are provided, uses the last candle's datetime for time reference (backtesting).
-    Otherwise uses live system clock.
-    
-    news_events: list of {"time_ist": "HH:MM", "event": str, "impact": "HIGH"|"MED"|"LOW"}
+    Live mode: uses system clock.
     """
-    # Use candle time if available (for backtesting), else use live clock
-    if candles and len(candles) > 0:
-        last_candle = candles[-1]
-        dt_val = last_candle.get('datetime')
-        if dt_val is not None:
-            from datetime import datetime as dt_cls
-            import pandas as pd
-            if isinstance(dt_val, str):
-                now = pd.Timestamp(dt_val).to_pydatetime().replace(tzinfo=IST)
-            elif hasattr(dt_val, 'to_pydatetime'):
-                now = dt_val.to_pydatetime().replace(tzinfo=IST)
-            elif isinstance(dt_val, (int, float)):
-                now = datetime.fromtimestamp(dt_val, tz=IST)
-            else:
-                now = datetime.now(IST)
-        else:
-            now = datetime.now(IST)
-    else:
-        now = datetime.now(IST)
+    now = datetime.now(IST)
+    return _evaluate_session(now, news_events)
+
+
+def get_session_info_from_timestamp(dt_utc) -> SessionInfo:
+    """
+    Determine session state from a specific UTC timestamp (Backtesting).
+    """
+    if hasattr(dt_utc, 'to_pydatetime'):
+        dt_utc = dt_utc.to_pydatetime()
     
+    # Convert UTC to IST
+    ist_now = dt_utc.replace(tzinfo=timezone.utc).astimezone(IST)
+    return _evaluate_session(ist_now)
+
+
+def _evaluate_session(now: datetime, news_events: list[dict] | None = None) -> SessionInfo:
+    """Internal core logic for session evaluation."""
     current_minutes = now.hour * 60 + now.minute
     info = SessionInfo()
     info.current_time_ist = now.strftime("%H:%M IST")
@@ -100,6 +100,15 @@ def get_session_info(candles: list[dict] | None = None, news_events: list[dict] 
                 active_kz = kz
                 info.killzone_active = True
                 info.killzone_name = kz["label"]
+                
+                # Set specific booleans
+                if kz_key == "london_open" or kz_key == "london_close":
+                    info.is_london_killzone = True
+                elif kz_key == "ny_open" or kz_key == "ny_extended":
+                    info.is_ny_killzone = True
+                elif kz_key == "asian_open":
+                    info.is_asian_session = True
+                
                 # Calculate remaining minutes
                 remaining = end_min - current_minutes
                 if remaining < 0:

@@ -85,9 +85,19 @@ def compute_dealing_range(swing_highs: list, swing_lows: list) -> DealingRange:
     if not swing_highs or not swing_lows:
         return dr
 
-    # Use most recent swing points
-    last_high = max(swing_highs[-5:], key=lambda s: s.price) if len(swing_highs) >= 1 else None
-    last_low = min(swing_lows[-5:], key=lambda s: s.price) if len(swing_lows) >= 1 else None
+    # User Fix: Tighten lookback to 40 H4 candles (~1 week) for reachable OTE zones
+    MAX_LOOKBACK = 40
+    if swing_highs and hasattr(swing_highs[-1], 'index'):
+        last_idx = swing_highs[-1].index
+        recent_highs = [s for s in swing_highs if last_idx - s.index <= MAX_LOOKBACK]
+        recent_lows = [s for s in swing_lows if last_idx - s.index <= MAX_LOOKBACK]
+    else:
+        recent_highs = swing_highs[-10:] if swing_highs else []
+        recent_lows = swing_lows[-10:] if swing_lows else []
+
+    # Use most recent swing points within the lookback
+    last_high = max(recent_highs, key=lambda s: s.price) if recent_highs else None
+    last_low = min(recent_lows, key=lambda s: s.price) if recent_lows else None
 
     if not last_high or not last_low:
         return dr

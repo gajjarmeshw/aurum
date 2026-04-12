@@ -1,5 +1,5 @@
 """
-XAUUSD Analyst v4 — Central Configuration
+XAUUSD Analyst v5.0 — Market Regime Classification Engine
 All constants, API keys, session windows, and thresholds.
 """
 
@@ -32,65 +32,141 @@ FINNHUB_SYMBOL = "OANDA:XAU_USD"
 
 # ─── Account Settings ───────────────────────────────────────
 ACCOUNT_SIZE = 10_000          # QTFunded $10k Instant
-MAX_LOT_TRADE1 = 0.03
+MAX_LOT_TRADE1 = 0.08
 MAX_LOT_TRADE2 = 0.02
 MAX_RISK_TRADE1 = 25           # USD
 MAX_RISK_TRADE2 = 15           # USD
-MAX_TRADES_PER_DAY = 2
+MAX_TRADES_PER_DAY = 4          # Asian + London + NY + one buffer; daily loss cap still governs
 WEEKLY_TARGET = 300            # USD
-DAILY_SOFT_CAP = 80            # USD profit — warning
-DAILY_HARD_CAP = 120           # USD profit — lock
-DAILY_LOSS_WARNING = 35        # USD — confirmation modal
-DAILY_LOSS_HARD_CAP = 50       # USD — full lock
+DAILY_SOFT_CAP = 300            # USD profit — warning
+DAILY_HARD_CAP = 1000           # USD profit — lock
+DAILY_LOSS_WARNING = 150        # USD — confirmation modal
+DAILY_LOSS_HARD_CAP = 500       # USD — full lock
 
 # ─── Killzone Windows (IST = UTC+5:30) ──────────────────────
 # Format: (hour, minute) tuples for start/end
 KILLZONES = {
-    "london_open":   {"start": (13, 30), "end": (15,  0), "label": "London Open"},
-    "london_close":  {"start": (15,  0), "end": (16, 30), "label": "London Session"},
-    "avoid_zone":    {"start": (16,  0), "end": (16, 30), "label": "London Close — Avoid"},
-    "ny_open":       {"start": (18, 30), "end": (20,  0), "label": "NY Open"},
-    "ny_extended":   {"start": (20,  0), "end": (21, 30), "label": "NY Extended"},
-    "dead_zone":     {"start": (23, 30), "end": ( 5, 30), "label": "Dead Zone — NO TRADE"},
+    "asian_open":     {"start": ( 5, 30), "end": (13, 30), "label": "Asian Session"},
+    "london_open":    {"start": (13, 30), "end": (15,  0), "label": "London Open"},
+    "london_close":   {"start": (15,  0), "end": (16, 30), "label": "London Session"},
+    "avoid_zone":     {"start": (16,  0), "end": (16, 30), "label": "London Close — Avoid"},
+    "ny_open":        {"start": (18, 30), "end": (20,  0), "label": "NY Open"},
+    "ny_extended":    {"start": (20,  0), "end": (21, 30), "label": "NY Extended"},
+    "dead_zone":      {"start": (23, 30), "end": ( 5, 30), "label": "Dead Zone — NO TRADE"},
 }
 
 LONDON_HANDOFF_TIME = (16, 30)  # IST — auto-generates session summary
 
+IST = timezone(timedelta(hours=5, minutes=30))
+
 def get_ist_now():
     """Get current time in IST (UTC+5:30)."""
-    return datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+    return datetime.now(IST)
 
-# ─── Confluence Weights (Phase 1 — Theory) ──────────────────
-CONFLUENCE_WEIGHTS = {
-    "liquidity_sweep":     2.0,
-    "fvg_ob_overlap":      2.0,
-    "ict_sequence":        1.5,
-    "h1_bos":              1.5,
-    "ote_zone":            1.0,
-    "dxy_alignment":       0.0,   # Disabled until DXY data feed is available
-    "killzone_timing":     1.0,
-    "premium_discount":    0.5,
-    "atr_normal":          0.5,
-    "no_news_conflict":    0.5,
-}
-CONFLUENCE_MAX = 12.0
-CONFLUENCE_MIN_LONDON_NY = 5.0
-CONFLUENCE_MIN_ASIAN = 8.0
+# ─── Dual-Mode Strategy Settings ──────────────────────────────
 
-# ─── ICT Grading ────────────────────────────────────────────
-ICT_GRADE_THRESHOLDS = {
-    "A+": 6,   # 6/6 steps
-    "A":  4,   # 4-5/6
-    "B":  3,   # 3/6
+# Mode 1: SWING MODE (5 factors, Max: 6.5 pts)
+# Volatility Regime Filters (Applied in simulation_core.py)
+ATR_NORMAL_MAX = 35.0  # Raised from 25 to capture normal weeks while filtering extreme 40+ outliers
+ATR_SWING_MIN  = 12.0  # Regime gate — below 12pt H1 ATR, Gold sweeps are range noise not ICT structure
+SCALP_ATR_GATE = 22.0  # Raised from 15 to allow scalps in normal 16-21 ATR regimes
+
+SWING_WEIGHTS = {
+    "liquidity_sweep":     2.0,  # Must have
+    "h1_bos":              1.5,  # Must have
+    "fvg_ob_overlap":      1.5,  # Must have
+    "killzone_timing":     1.0,  # Important
+    "dxy_alignment":       1.0,  # HARD GATE (Raised from 0.5)
 }
-TRADEABLE_GRADES = ["A+", "A"]
+SWING_SCORE_MAX = sum(SWING_WEIGHTS.values())
+SWING_SCORE_MIN_LIVE = 4.0
+SWING_SCORE_MIN_BACKTEST = 3.8  # Score 3.0-3.2 setups historically lose; 3.8+ has >60% WR
+
+SWING_RISK = {
+    "lots": 0.08,            # 0.08 × 10pt SL × 100 = $80 actual risk; gets 5m to ~$316/week
+    "tp_rr": 3.0,            # 1:3.0 runner TP — with 50% partial at 1R, effective average RR = 2.0
+    "sl_atr_multiplier": 0.6,
+    "sl_atr_max": 1.5,
+    "min_sl_distance": 8.0,
+}
+
+# Mode 2: SCALP MODE (Binary Gates)
+SCALP_RISK = {
+    "lots": 0.08,                  # Matched to swing — fixed 8pt SL with 0.08 lots = $64 actual risk
+    "sl_distance": 8.0,            # Fixed gap for calm market scalps
+    "tp_rr": 2.0,                  # 1:2.0 target — after 50% partial at 1R, runner to 2R
+    "score_min": 3.0,              # Requires all 3 gates to pass (Gate1 + Gate2 + Gate3 = 3.0)
+    "min_confluence": 2.0,         # Min swing score for HTF context check
+    "displacement_lookback": 20,   # M5 bars — fresh FVG must form within last 20 bars (~100 min)
+    "fvg_min_size": 1.0,           # Minimum FVG size in points (filters micro gaps)
+}
+
+# Cooldowns between same-type trades
+# ─── Trend Filter ───────────────────────────────────────────
+# 5m : set False — ICT 5m entries are inherently counter-momentum (sweep then reverse)
+# 15m: set True  — 15m structure aligns with prevailing trend; filter cuts 42% loss rate
+TREND_FILTER_ENABLED = False
+
+SWING_COOLDOWN_SECONDS = 3 * 3600   # 3h — allows Asian+London+NY all to fire in same day
+SCALP_COOLDOWN_SECONDS = 15 * 60    # 15-minute gap between scalp entries
+SIGNAL_COOLDOWN_BARS = 0
+SIGNAL_REDUNDANCY_CHECK = True
+
+# ─── Session Expansion Strategy (PRIMARY) ───────────────────
+# This is the strategy that actually drives trades.
+# ICT confluence above is kept for dashboard display only.
+SESSION_EXPANSION = {
+    "lots": 0.05,
+
+    # Asian range (5:30 IST → 13:30 IST)
+    "asian_start_hour": 5,
+    "asian_start_min": 30,
+    "asian_end_hour": 13,
+    "asian_end_min": 30,
+
+    # London breakout window (13:30 → 15:30 IST)
+    "london_window_start_min": 13 * 60 + 30,
+    "london_window_end_min":   15 * 60 + 30,
+
+    # NY pullback window (18:30 → 20:30 IST)
+    "ny_window_start_min": 18 * 60 + 30,
+    "ny_window_end_min":   20 * 60 + 30,
+
+    # Range quality filter — RELATIVE to H1 ATR so it adapts to regime
+    "asian_range_min_atr": 0.5,   # range must be >= 0.5 × ATR (real liquidity)
+    "asian_range_max_atr": 6.0,   # range must be <= 6.0 × ATR (allow trending days)
+
+    # Volatility filter — absolute (guards against dead/extreme markets)
+    "atr_min": 5.0,
+    "atr_max": 120.0,
+
+    # H1 bias filter (distance from EMA50 to confirm direction)
+    "bias_min_distance": 3.0,   # pts — within this = no clear bias, skip day
+
+    # Risk — 0.75% of $10k account. At stop-after-2-losses + 0.07 lots, max daily exposure = $168.
+    # Daily cap is $500 — 3× buffer. Well within funded account rules.
+    "risk_per_trade": 75.0,
+    "sl_atr_mult": 0.7,
+    "sl_min": 8.0,
+    "sl_max": 25.0,
+    "tp1_rr": 1.0,              # Half exit (BE runner after this)
+    "tp2_rr": 2.0,              # Runner target
+    "tp1_close_pct": 0.5,
+
+    # Daily guardrails
+    "max_trades_per_day": 2,    # 1 London + 1 NY max
+    "stop_after_loss": True,    # After any loss, day is over
+    "stop_after_profit_target": 1000.0,
+}
+
+# Grade filtering (Legacy, mostly for logging now)
+ALLOWED_GRADES = ["A+", "A", "B"]
 
 # ─── Indicator Settings ─────────────────────────────────────
 ATR_PERIOD = 14
 SWING_LOOKBACK = 5             # 5-bar pivot detection
-ATR_NORMAL_MIN = 3.0           # USD — scaled for $4600 gold H1 (was 8-20 for $2000 gold)
-ATR_NORMAL_MAX = 50.0          # USD — scaled for $4600 gold H1
-CANDLE_HISTORY_SIZE = 200      # candles per timeframe in memory
+FVG_PROXIMITY_PTS = 5.0        # pts — price within this distance counts as "approaching" FVG
+CANDLE_HISTORY_SIZE = 5000      # candles per timeframe in memory (Twelve Data Free Tier max)
 CANDLE_PERSIST_INTERVAL = 900  # seconds (15 min)
 
 # ─── Timeframes ─────────────────────────────────────────────
@@ -122,6 +198,31 @@ TRADE2_MIN_PSYCH = 7
 
 # ─── News Safety ─────────────────────────────────────────────
 NEWS_BLOCK_MINUTES = 8         # no trading within 8 min of high-impact news
+
+# ─── Market Regime Thresholds (v5.0) ─────────────────────────
+ADX_STRONG_TREND = 25
+ADX_WEAK_TREND = 15
+ATR_H1_VOLATILE_CEILING = 35.0 # Raised from 20.0 to match Alpha profile
+ATR_H1_DEAD_FLOOR = 6.0        # Relaxed from 8.0
+EMA_TREND_PERIOD = 50          # D1/H1 Trend Filter
+EMA_ENTRY_PERIOD = 20          # Pullback Anchor
+
+# ─── Momentum Entry Filters (v5.0) ──────────────────────────
+MOMENTUM_CANDLE_BODY_MIN = 0.20 # Relaxed from 0.60 for 5m TF
+MIN_CANDLE_RANGE_PTS = 3.0      # Ignore micro candles
+MIN_STOP_DISTANCE_PTS = 10.0    # Too tight = random noise
+MAX_STOP_DISTANCE_PTS = 25.0    # Too wide = setup not clean
+
+# ─── Strategy Settings by Market Type (v5.0) ────────────────
+STRATEGY_CONFIGS = {
+    'STRONG_BULL':    {'target_rr': 2.5, 'be_at_rr': 1.0, 'lots': 0.05},
+    'STRONG_BEAR':    {'target_rr': 2.5, 'be_at_rr': 1.0, 'lots': 0.05},
+    'WEAK_BULL':      {'target_rr': 2.0, 'be_at_rr': 1.0, 'lots': 0.05},
+    'WEAK_BEAR':      {'target_rr': 2.0, 'be_at_rr': 1.0, 'lots': 0.05},
+    'TIGHT_RANGE':    {'target_rr': 2.0, 'be_at_rr': 1.0, 'lots': 0.03},
+    'NEWS_DRIVEN':    {'target_rr': 2.5, 'be_at_rr': 1.0, 'lots': 0.05},
+    'VOLATILE_RANGE': {'target_rr': 2.5, 'be_at_rr': 1.0, 'lots': 0.05}, # Enabled for Trending Volatility
+}
 
 # ─── Paths ───────────────────────────────────────────────────
 import pathlib

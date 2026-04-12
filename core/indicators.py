@@ -30,7 +30,12 @@ class FVG:
     direction: str       # "bullish" or "bearish"
     index: int
     timestamp: float
+    size: float = 0.0
+    distance: float = 0.0
     filled: bool = False
+    
+    def to_dict(self):
+        return vars(self)
 
 
 @dataclass
@@ -42,6 +47,10 @@ class OrderBlock:
     index: int
     timestamp: float
     mitigated: bool = False
+    status: str = ""        # "Inside", "Approaching", or ""
+    
+    def to_dict(self):
+        return vars(self)
 
 
 @dataclass
@@ -76,12 +85,29 @@ class IndicatorResult:
     swing_lows_m15: list = field(default_factory=list)
     fvgs_h1: list = field(default_factory=list)
     fvgs_m15: list = field(default_factory=list)
+    fvgs_m5: list = field(default_factory=list)
+    obs_h4: list = field(default_factory=list)
     obs_h1: list = field(default_factory=list)
     obs_m15: list = field(default_factory=list)
     obs_m5: list = field(default_factory=list)
     bos_h1: list = field(default_factory=list)
     choch_h1: list = field(default_factory=list)
+    bos_m15: list = field(default_factory=list)
+    choch_m15: list = field(default_factory=list)
+    bos_m5: list = field(default_factory=list)
+    choch_m5: list = field(default_factory=list)
     liquidity_pools: list = field(default_factory=list)
+    bsl_swept: bool = False
+    ssl_swept: bool = False
+    m15_candles: list = field(default_factory=list)
+    m5_candles: list = field(default_factory=list)
+    # Market Regime Indicators (v5.0)
+    adx: float = 0.0
+    dmp: float = 0.0
+    dmn: float = 0.0
+    ema_20: float = 0.0
+    ema_50: float = 0.0
+    candle_body_ratio: float = 0.0
 
     def to_dict(self) -> dict:
         """Convert to JSON-safe dict."""
@@ -101,12 +127,30 @@ class IndicatorResult:
             "swing_lows_h1": _serialize(self.swing_lows_h1),
             "fvgs_h1": _serialize(self.fvgs_h1),
             "fvgs_m15": _serialize(self.fvgs_m15),
+            "fvgs_m5": _serialize(self.fvgs_m5),
+            "obs_h4": _serialize(self.obs_h4),
             "obs_h1": _serialize(self.obs_h1),
             "obs_m15": _serialize(self.obs_m15),
             "obs_m5": _serialize(self.obs_m5),
             "bos_h1": _serialize(self.bos_h1),
             "choch_h1": _serialize(self.choch_h1),
+            "bos_m15": _serialize(self.bos_m15),
+            "choch_m15": _serialize(self.choch_m15),
+            "bos_m5": _serialize(self.bos_m5),
+            "choch_m5": _serialize(self.choch_m5),
             "liquidity_pools": _serialize(self.liquidity_pools),
+            "bsl_swept": self.bsl_swept,
+            "ssl_swept": self.ssl_swept,
+            "status": "✅" if (self.bsl_swept or self.ssl_swept) else "❌",
+            "detail": "Recent sweep" if (self.bsl_swept or self.ssl_swept) else "No recent sweep",
+            # User Fix: Explicit targets for UI
+            "bsl": next((p.price for p in self.liquidity_pools if p.type == "BSL" and not p.swept), 0),
+            "ssl": next((p.price for p in self.liquidity_pools if p.type == "SSL" and not p.swept), 0),
+            "fvg": vars(self.fvgs_h1[-1]) if self.fvgs_h1 else None,
+            "ob": vars(self.obs_m15[-1]) if self.obs_m15 else None,
+            "adx": round(self.adx, 1),
+            "ema_20": round(self.ema_20, 2),
+            "ema_50": round(self.ema_50, 2),
         }
 
 
@@ -135,6 +179,103 @@ def compute_atr(candles: list[dict], period: int = None) -> float:
         return 0.0
     atr = sum(recent) / len(recent)
     return atr
+
+
+# ─── EMA (Exponential Moving Average) ───────────────────────
+
+def compute_ema(candles: list[dict], period: int) -> float:
+    """
+    Exponential Moving Average.
+    EMA = (Close - EMA_prev) * multiplier + EMA_prev
+    """
+    if len(candles) < period:
+        return candles[-1]["close"] if candles else 0.0
+    
+    multiplier = 2.0 / (period + 1)
+    
+    # Initialize with SMA for the first 'period' candles
+    ema = sum(c["close"] for c in candles[:period]) / period
+    
+    # Iterate through the rest
+    for i in range(period, len(candles)):
+        ema = (candles[i]["close"] - ema) * multiplier + ema
+        
+    return ema
+
+
+def _wilder_smooth(data: list, length: int) -> list:
+    """Welles Wilder's smoothing used by ATR and ADX calculations."""
+    if not data:
+        return []
+    smoothed = [sum(data[:length])]
+    for i in range(length, len(data)):
+        smoothed.append(smoothed[-1] - (smoothed[-1] / length) + data[i])
+    return smoothed
+
+
+# ─── ADX (Average Directional Index) ────────────────────────
+
+def compute_adx(candles: list[dict], period: int = 14) -> tuple[float, float, float]:
+    """
+    Directional Movement Index (ADX, +DI, -DI).
+    Returns (ADX, DMP, DMN).
+    """
+    if len(candles) < period * 2:
+        return 0.0, 0.0, 0.0
+
+    trs = []
+    dmps = []
+    dmns = []
+
+    for i in range(1, len(candles)):
+        c = candles[i]
+        p = candles[i-1]
+        
+        # True Range
+        tr = max(c["high"] - c["low"], 
+                 abs(c["high"] - p["close"]), 
+                 abs(c["low"] - p["close"]))
+        trs.append(tr)
+        
+        # Directional Movement
+        up_move = c["high"] - p["high"]
+        down_move = p["low"] - c["low"]
+        
+        if up_move > down_move and up_move > 0:
+            dmps.append(up_move)
+            dmns.append(0)
+        elif down_move > up_move and down_move > 0:
+            dmps.append(0)
+            dmns.append(down_move)
+        else:
+            dmps.append(0)
+            dmns.append(0)
+
+    smooth_tr  = _wilder_smooth(trs,  period)
+    smooth_dmp = _wilder_smooth(dmps, period)
+    smooth_dmn = _wilder_smooth(dmns, period)
+
+    if len(smooth_tr) < period: return 0.0, 0.0, 0.0
+
+    # Calculate DI and DX; only last values of DI are needed for the return
+    dxs = []
+    last_di_bull = 0.0
+    last_di_bear = 0.0
+
+    for i in range(len(smooth_tr)):
+        di_bull = 100 * (smooth_dmp[i] / smooth_tr[i]) if smooth_tr[i] != 0 else 0.0
+        di_bear = 100 * (smooth_dmn[i] / smooth_tr[i]) if smooth_tr[i] != 0 else 0.0
+        sum_di  = di_bull + di_bear
+        dx = 100 * (abs(di_bull - di_bear) / sum_di) if sum_di != 0 else 0.0
+        dxs.append(dx)
+        last_di_bull = di_bull
+        last_di_bear = di_bear
+
+    # ADX is SMA of last `period` DX values
+    recent_dxs = dxs[-period:]
+    adx = sum(recent_dxs) / len(recent_dxs) if recent_dxs else 0.0
+
+    return adx, last_di_bull, last_di_bear
 
 
 # ─── Swing Highs / Lows ─────────────────────────────────────
@@ -193,6 +334,9 @@ def detect_fvgs(candles: list[dict]) -> list[FVG]:
     if len(candles) < 3:
         return fvgs
 
+    min_fvg = config.SCALP_RISK.get("fvg_min_size", 1.0)
+    current_price = candles[-1]["close"]
+
     for i in range(1, len(candles) - 1):
         prev = candles[i - 1]
         curr = candles[i]
@@ -200,72 +344,117 @@ def detect_fvgs(candles: list[dict]) -> list[FVG]:
 
         # Bullish FVG
         if prev["high"] < next_c["low"]:
-            fvgs.append(FVG(
-                high=next_c["low"],
-                low=prev["high"],
-                direction="bullish",
-                index=i,
-                timestamp=curr.get("timestamp", 0),
-            ))
+            gap_size = next_c["low"] - prev["high"]
+            if gap_size >= min_fvg:
+                fvgs.append(FVG(
+                    high=next_c["low"],
+                    low=prev["high"],
+                    direction="bullish",
+                    index=i,
+                    timestamp=curr.get("timestamp", 0),
+                    size=round(gap_size, 2),
+                    distance=round(abs(prev["high"] - current_price), 2)
+                ))
 
         # Bearish FVG
         if prev["low"] > next_c["high"]:
-            fvgs.append(FVG(
-                high=prev["low"],
-                low=next_c["high"],
-                direction="bearish",
-                index=i,
-                timestamp=curr.get("timestamp", 0),
-            ))
+            gap_size = prev["low"] - next_c["high"]
+            if gap_size >= min_fvg:
+                fvgs.append(FVG(
+                    high=prev["low"],
+                    low=next_c["high"],
+                    direction="bearish",
+                    index=i,
+                    timestamp=curr.get("timestamp", 0),
+                    size=round(gap_size, 2),
+                    distance=round(abs(next_c["high"] - current_price), 2)
+                ))
 
     return fvgs
 
 
 # ─── Order Blocks ────────────────────────────────────────────
 
-def detect_order_blocks(candles: list[dict], min_impulse_multiple: float = 1.5) -> list[OrderBlock]:
+def detect_order_blocks(candles: list[dict], timeframe: str = "H1", min_impulse_multiple: float = 1.3, lookahead: int = 3) -> list[OrderBlock]:
     """
-    Last opposite candle before an impulse move.
-    Bullish OB: last bearish candle before strong bullish impulse.
-    Bearish OB: last bullish candle before strong bearish impulse.
+    Identifies Order Blocks (Supply/Demand zones).
+    An OB is the last opposite candle before a strong displacement move.
+    
+    Now uses a multi-candle lookahead to capture aggregate displacement,
+    even if it doesn't happen in a single massive bar.
     """
     obs = []
-    if len(candles) < 3:
+    if len(candles) < lookahead + 2:
         return obs
 
-    for i in range(1, len(candles) - 1):
+    current_price = candles[-1]["close"]
+
+    for i in range(1, len(candles) - lookahead):
         curr = candles[i]
-        next_c = candles[i + 1]
-        prev = candles[i - 1]
 
-        curr_body = abs(curr["close"] - curr["open"])
-        next_body = abs(next_c["close"] - next_c["open"])
-        avg_body = (curr_body + abs(prev["close"] - prev["open"])) / 2
+        # Local rolling 10-bar average body size for impulse threshold
+        local_avg = sum(abs(candles[j]["close"] - candles[j]["open"]) for j in range(max(0, i-10), i)) / 10 if i >= 10 else 5.0
+        if local_avg == 0:
+            local_avg = 5.0
 
-        if avg_body == 0:
+        # OB Width Filter: M15 OBs should not be wider than $15
+        if timeframe == "M15" and abs(curr["high"] - curr["low"]) > 15.0:
             continue
 
-        # Bullish OB: current is bearish, next is strong bullish
-        if (curr["close"] < curr["open"] and
-                next_c["close"] > next_c["open"] and
-                next_body >= avg_body * min_impulse_multiple):
-            obs.append(OrderBlock(
-                high=curr["high"], low=curr["low"],
-                direction="bullish", index=i,
-                timestamp=curr.get("timestamp", 0),
-            ))
+        # Bullish OB (Demand): curr is bearish, followed by strong bullish displacement
+        if curr["close"] < curr["open"]:
+            agg_move = 0.0
+            for k in range(1, lookahead + 1):
+                agg_move += candles[i + k]["close"] - candles[i + k]["open"]
+                if agg_move >= local_avg * min_impulse_multiple:
+                    obs.append(OrderBlock(
+                        high=curr["high"], low=curr["low"],
+                        direction="bullish", index=i,
+                        timestamp=curr.get("timestamp", 0),
+                    ))
+                    break
 
-        # Bearish OB: current is bullish, next is strong bearish
-        if (curr["close"] > curr["open"] and
-                next_c["close"] < next_c["open"] and
-                next_body >= avg_body * min_impulse_multiple):
-            obs.append(OrderBlock(
-                high=curr["high"], low=curr["low"],
-                direction="bearish", index=i,
-                timestamp=curr.get("timestamp", 0),
-            ))
+        # Bearish OB (Supply): curr is bullish, followed by strong bearish displacement
+        elif curr["close"] > curr["open"]:
+            agg_move = 0.0
+            for k in range(1, lookahead + 1):
+                agg_move += candles[i + k]["open"] - candles[i + k]["close"]
+                if agg_move >= local_avg * min_impulse_multiple:
+                    obs.append(OrderBlock(
+                        high=curr["high"], low=curr["low"],
+                        direction="bearish", index=i,
+                        timestamp=curr.get("timestamp", 0),
+                    ))
+                    break
 
-    return obs
+    # Mitigation Check: Only return blocks that haven't been traded through
+    valid_obs = []
+    for ob in obs:
+        is_mitigated = False
+        # Check all candles from impulse (ob.index+1) till present
+        for j in range(ob.index + 1, len(candles)):
+            if ob.direction == "bullish":
+                if candles[j]["low"] < ob.low:
+                    is_mitigated = True
+                    break
+            else: # bearish
+                if candles[j]["high"] > ob.high:
+                    is_mitigated = True
+                    break
+        
+        if not is_mitigated:
+            # Set status for UI (Inside/Approaching)
+            current_price = candles[-1]["close"]
+            if ob.low <= current_price <= ob.high:
+                ob.status = "INSIDE"
+            elif abs(ob.low - current_price) <= 15 or abs(ob.high - current_price) <= 15:
+                # User Fix: Proximity status
+                ob.status = "APPROACHING"
+            else:
+                ob.status = ""
+            valid_obs.append(ob)
+
+    return valid_obs
 
 
 # ─── BOS / CHoCH Detection ──────────────────────────────────
@@ -276,6 +465,9 @@ def detect_bos_choch(candles: list[dict], swing_highs: list[SwingPoint],
     Break of Structure (BOS) — swing breach in trend direction.
     Change of Character (CHoCH) — swing breach against current trend.
     
+    Scans the last N candles for breaks against swing levels,
+    not just the current bar.
+    
     Returns (bos_list, choch_list).
     """
     bos_list = []
@@ -284,9 +476,10 @@ def detect_bos_choch(candles: list[dict], swing_highs: list[SwingPoint],
     if len(swing_highs) < 2 or len(swing_lows) < 2:
         return bos_list, choch_list
 
+    if not candles:
+        return bos_list, choch_list
+
     # Determine current trend from swing sequence
-    # Higher highs + higher lows = bullish
-    # Lower highs + lower lows = bearish
     last_two_highs = swing_highs[-2:]
     last_two_lows = swing_lows[-2:]
 
@@ -295,46 +488,52 @@ def detect_bos_choch(candles: list[dict], swing_highs: list[SwingPoint],
     trend_down = (last_two_highs[1].price < last_two_highs[0].price and
                   last_two_lows[1].price < last_two_lows[0].price)
 
-    if not candles:
-        return bos_list, choch_list
-
-    current_price = candles[-1]["close"]
-    last_candle = candles[-1]
-
-    # Check for BOS / CHoCH against most recent swing levels
     last_high = swing_highs[-1]
     last_low = swing_lows[-1]
 
-    # Bullish BOS: price breaks above last swing high in uptrend
-    if current_price > last_high.price:
-        if trend_up:
-            bos_list.append(BOS(
-                price=last_high.price, direction="bullish",
-                index=len(candles) - 1,
-                timestamp=last_candle.get("timestamp", 0),
-            ))
-        elif trend_down:
-            # Breaking high in downtrend = CHoCH
-            choch_list.append(BOS(
-                price=last_high.price, direction="bullish",
-                index=len(candles) - 1,
-                timestamp=last_candle.get("timestamp", 0),
-            ))
+    # Scan last 15 candles for structure breaks (not just current bar)
+    scan_range = candles[-15:] if len(candles) >= 15 else candles
+    
+    bullish_found = False
+    bearish_found = False
+    
+    for candle in scan_range:
+        # Bullish break: candle high breaks above last swing high
+        if not bullish_found and candle["high"] > last_high.price:
+            direction_label = "bullish"
+            if trend_up:
+                bos_list.append(BOS(
+                    price=last_high.price, direction=direction_label,
+                    index=len(candles) - 1,
+                    timestamp=candle.get("timestamp", 0),
+                ))
+            elif trend_down:
+                choch_list.append(BOS(
+                    price=last_high.price, direction=direction_label,
+                    index=len(candles) - 1,
+                    timestamp=candle.get("timestamp", 0),
+                ))
+            bullish_found = True
 
-    # Bearish BOS: price breaks below last swing low in downtrend
-    if current_price < last_low.price:
-        if trend_down:
-            bos_list.append(BOS(
-                price=last_low.price, direction="bearish",
-                index=len(candles) - 1,
-                timestamp=last_candle.get("timestamp", 0),
-            ))
-        elif trend_up:
-            choch_list.append(BOS(
-                price=last_low.price, direction="bearish",
-                index=len(candles) - 1,
-                timestamp=last_candle.get("timestamp", 0),
-            ))
+        # Bearish break: candle low breaks below last swing low
+        if not bearish_found and candle["low"] < last_low.price:
+            direction_label = "bearish"
+            if trend_down:
+                bos_list.append(BOS(
+                    price=last_low.price, direction=direction_label,
+                    index=len(candles) - 1,
+                    timestamp=candle.get("timestamp", 0),
+                ))
+            elif trend_up:
+                choch_list.append(BOS(
+                    price=last_low.price, direction=direction_label,
+                    index=len(candles) - 1,
+                    timestamp=candle.get("timestamp", 0),
+                ))
+            bearish_found = True
+        
+        if bullish_found and bearish_found:
+            break
 
     return bos_list, choch_list
 
@@ -342,34 +541,74 @@ def detect_bos_choch(candles: list[dict], swing_highs: list[SwingPoint],
 # ─── Liquidity Pools ────────────────────────────────────────
 
 def detect_liquidity_pools(swing_highs: list[SwingPoint], swing_lows: list[SwingPoint],
-                            current_price: float, tolerance: float = 5.0) -> list[LiquidityPool]:
+                            current_price: float, candles: list[dict] = None,
+                            tolerance: float = None) -> list[LiquidityPool]:
     """
     Equal highs/lows clusters — liquidity targets.
-    tolerance: dollar range within which two levels are considered "equal".
+    Sweep detection: checks if recent candles actually pierced the pool level.
+    tolerance: dollar range (auto-calculated as 0.02% of price if None).
     """
+    if tolerance is None:
+        tolerance = current_price * 0.0002  # ~$0.5-0.9 for gold
+        
     pools = []
+    # Use last 20 candles to check for sweeps
+    recent_candles = candles[-20:] if candles and len(candles) >= 20 else (candles or [])
+    recent_highs = [c["high"] for c in recent_candles] if recent_candles else []
+    recent_lows = [c["low"] for c in recent_candles] if recent_candles else []
+    max_recent_high = max(recent_highs) if recent_highs else current_price
+    min_recent_low = min(recent_lows) if recent_lows else current_price
 
-    # BSL — equal highs (buy-side liquidity above)
+    range_high = float('inf')
+    range_low = 0.0
+    if swing_highs and swing_lows:
+        # User Fix: Align with dealing_range calculation to ensure consistency
+        # Use last 40 H4 candle index window
+        MAX_LOOKBACK = 40
+        last_idx = swing_highs[-1].index
+        recent_sh = [s for s in swing_highs if last_idx - s.index <= MAX_LOOKBACK]
+        recent_sl = [s for s in swing_lows if last_idx - s.index <= MAX_LOOKBACK]
+        if recent_sh and recent_sl:
+            range_high = max(s.price for s in recent_sh)
+            range_low = min(s.price for s in recent_sl)
+
+    # BSL — buy-side liquidity above price
     if swing_highs:
-        high_prices = [sh.price for sh in swing_highs[-20:]]  # last 20 swings
+        # User Fix: Filter highs ABOVE current price AND WITHIN range_high
+        high_prices = [sh.price for sh in swing_highs[-100:] 
+                       if current_price + (tolerance or 0) < sh.price <= range_high]
+        # User Fix: Prioritize nearest levels and limit distance
         clusters = _cluster_levels(high_prices, tolerance)
+        clusters.sort(key=lambda x: abs(x[0] - current_price))
+        
         for level, count in clusters:
-            if count >= 2 and level > current_price:
-                pools.append(LiquidityPool(
-                    price=level, type="BSL", count=count,
-                    swept=current_price > level,
-                ))
+            if count >= 1: # Relaxed: Single swing points are valid liquidity targets
+                # Sticky Sweep: any of the last 15 candles broke then closed inside
+                swept = False
+                for c in recent_candles[-15:]:
+                    if c["high"] > level and c["close"] < level:
+                        swept = True
+                        break
+                pools.append(LiquidityPool(level, "BSL", count=count, swept=swept))
 
-    # SSL — equal lows (sell-side liquidity below)
+    # SSL — sell-side liquidity below price
     if swing_lows:
-        low_prices = [sl.price for sl in swing_lows[-20:]]
+        # User Fix: Filter ALL lows BELOW current price AND WITHIN range_low
+        low_prices = [sl.price for sl in swing_lows 
+                      if range_low <= sl.price < current_price - (tolerance or 0)]
         clusters = _cluster_levels(low_prices, tolerance)
+        # Sort by distance to current price and limit
+        clusters.sort(key=lambda x: abs(x[0] - current_price))
+        
         for level, count in clusters:
-            if count >= 2 and level < current_price:
-                pools.append(LiquidityPool(
-                    price=level, type="SSL", count=count,
-                    swept=current_price < level,
-                ))
+            if count >= 1: # Relaxed: Single swing points are valid liquidity targets
+                # Sticky Sweep: any of the last 15 candles broke then closed inside
+                swept = False
+                for c in recent_candles[-15:]:
+                    if c["low"] < level and c["close"] > level:
+                        swept = True
+                        break
+                pools.append(LiquidityPool(level, "SSL", count=count, swept=swept))
 
     return pools
 
@@ -404,7 +643,7 @@ def compute_indicators(h4_candles: list[dict], h1_candles: list[dict],
     """
     result = IndicatorResult()
 
-    # ATR
+    # ─── Core Indicators (Legacy Support) ───────────────────
     result.atr_h1 = compute_atr(h1_candles)
     result.atr_h4 = compute_atr(h4_candles)
 
@@ -416,21 +655,51 @@ def compute_indicators(h4_candles: list[dict], h1_candles: list[dict],
     # FVGs
     result.fvgs_h1 = detect_fvgs(h1_candles)
     result.fvgs_m15 = detect_fvgs(m15_candles)
+    result.fvgs_m5 = detect_fvgs(m5_candles)
 
     # Order Blocks
-    result.obs_h1 = detect_order_blocks(h1_candles)
-    result.obs_m15 = detect_order_blocks(m15_candles)
-    result.obs_m5 = detect_order_blocks(m5_candles)
+    result.obs_h4 = detect_order_blocks(h4_candles, "H4")
+    result.obs_h1 = detect_order_blocks(h1_candles, "H1")
+    result.obs_m15 = detect_order_blocks(m15_candles, "M15")
+    result.obs_m5 = detect_order_blocks(m5_candles, "M5")
 
     # BOS / CHoCH on H1
     result.bos_h1, result.choch_h1 = detect_bos_choch(
         h1_candles, result.swing_highs_h1, result.swing_lows_h1
     )
 
-    # Liquidity Pools
-    current_price = h1_candles[-1]["close"] if h1_candles else 0
-    result.liquidity_pools = detect_liquidity_pools(
-        result.swing_highs_h1, result.swing_lows_h1, current_price
+    # BOS / CHoCH on M15
+    result.bos_m15, result.choch_m15 = detect_bos_choch(
+        m15_candles, result.swing_highs_m15, result.swing_lows_m15
     )
+
+    # BOS / CHoCH on M5 (For Scalp Triggers)
+    result.m5_candles = m5_candles      # needed by confluence Gate 1 + Gate 3B freshness check
+    swing_highs_m5, swing_lows_m5 = detect_swings(m5_candles)
+    result.bos_m5, result.choch_m5 = detect_bos_choch(
+        m5_candles, swing_highs_m5, swing_lows_m5
+    )
+
+    # Liquidity Pools
+    current_price = m15_candles[-1]["close"] if m15_candles else 0
+    result.liquidity_pools = detect_liquidity_pools(
+        result.swing_highs_h1, result.swing_lows_h1, current_price, m15_candles
+    )
+
+    # ─── Market Regime Indicator Calculations (v5.0) ─────────
+    
+    # ADX on H1 (Primary Regime Gauge)
+    result.adx, result.dmp, result.dmn = compute_adx(h1_candles)
+    
+    # Dual EMA on H1 (Trend Filter)
+    result.ema_20 = compute_ema(h1_candles, 20)
+    result.ema_50 = compute_ema(h1_candles, 50)
+    
+    # Momentum Ratio for last M15 Candle (Entry filter)
+    if m15_candles:
+        last = m15_candles[-1]
+        c_range = last["high"] - last["low"]
+        c_body = abs(last["close"] - last["open"])
+        result.candle_body_ratio = c_body / c_range if c_range > 0 else 0.0
 
     return result

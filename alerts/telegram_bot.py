@@ -73,6 +73,41 @@ class TelegramBot:
         )
         self.send_message(msg)
 
+    def alert_trade_signal(
+        self,
+        direction: str,
+        mode: str,
+        price: float,
+        score: float,
+        session: str,
+        sl: float = 0.0,
+        tp: float = 0.0,
+        lots: float = 0.0,
+    ):
+        """Send a trade entry signal alert."""
+        is_long = "bullish" in direction or direction == "long"
+        emoji = "🟢" if is_long else "🔴"
+        dir_str = "LONG" if is_long else "SHORT"
+
+        lines = [
+            f"{emoji} <b>{dir_str} XAUUSD — {mode.upper()}</b>",
+            "",
+            f"Entry:   <b>${price:.2f}</b>",
+        ]
+        if sl:
+            lines.append(f"SL:      <b>${sl:.2f}</b>")
+        if tp:
+            lines.append(f"TP:      <b>${tp:.2f}</b>")
+        if lots:
+            lines.append(f"Lots:    <b>{lots}</b>")
+        lines += [
+            f"Score:   <b>{score:.1f}</b>",
+            f"Session: <b>{session}</b>",
+            "",
+            f"⚠️ Verify levels on dashboard before entering.",
+        ]
+        self.send_message("\n".join(lines))
+
     def alert_failover(self, event: str, source: str):
         """Send feed status alert."""
         try:

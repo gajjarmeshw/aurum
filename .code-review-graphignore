@@ -1,0 +1,13 @@
+# Aurum code-review-graph ignore file
+venv/
+__pycache__/
+*.log
+*.json
+.git/
+.gemini/
+.agent/
+static/
+templates/
+deploy/
+scripts/
+tests/

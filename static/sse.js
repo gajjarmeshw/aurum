@@ -6,20 +6,13 @@
 
 // ── Timeframe Management ────────────────────────────────
 function switchMainTimeframe(tf) {
-    console.log(`[UI] Switching chart to ${tf}`);
-    if (window.charts) {
-        window.charts.switchTimeframe(tf);
-    }
-    
+    console.log(`[UI] Context switch to ${tf} priority`);
     // Update button states
     document.querySelectorAll('.tf-btn').forEach(btn => {
         btn.classList.toggle('active', btn.id === `tf-${tf}`);
     });
-    
-    // Update title
-    const titleMap = { 'H4': '4H', 'H1': '1H', 'M15': '15M', 'M5': '5M' };
-    const titleEl = document.getElementById('chart-title');
-    if (titleEl) titleEl.textContent = `XAUUSD / ${titleMap[tf]} Live`;
+    const tfChip = document.getElementById('matrix-tf-chip');
+    if (tfChip) tfChip.textContent = `${tf} LIVE`;
 }
 
 // ── Tab Management ─────────────────────────────────────
@@ -132,6 +125,7 @@ function populateAutoResults(data) {
     _setEl('bt-stat-total',   data.setups_found ?? '—');
     _setEl('bt-stat-winrate', summary.win_rate ?? '—');
     _setEl('bt-stat-ratio',   `${summary.wins ?? 0}W / ${summary.losses ?? 0}L`);
+
     const pnlEl = document.getElementById('bt-stat-pnl');
     if (pnlEl) {
         pnlEl.textContent = summary.total_pnl ?? '$0';
@@ -139,7 +133,14 @@ function populateAutoResults(data) {
         pnlEl.style.color = pnlNum >= 0 ? 'var(--c-green)' : 'var(--c-red)';
     }
 
-    // Fetch full results
+    const weeklyEl = document.getElementById('bt-stat-weekly');
+    if (weeklyEl && data.weekly_avg) {
+        weeklyEl.textContent = data.weekly_avg;
+        const wNum = parseFloat((data.weekly_avg || '0').replace('$', ''));
+        weeklyEl.style.color = wNum >= 0 ? 'var(--c-green)' : 'var(--c-red)';
+    }
+
+    // Fetch full trade-by-trade results from CSV
     fetchLatestBtResults();
 }
 
@@ -156,16 +157,41 @@ function renderBtTable(rows) {
     if (!rows.length) { tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--c-text-3); padding:24px;">No results found for this date range.</td></tr>'; return; }
 
     tbody.innerHTML = rows.map(r => {
-        const win = r.result === 'win';
-        const dt = r.timestamp ? new Date(Number(r.timestamp) * 1000).toLocaleString('en-IN', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }) : '—';
+        const isLong = r.direction === 'long';
+        const res = (r.result || '').toLowerCase();
+        const isWin = res === 'win';
+        const isBe  = res === 'be';
+        const isPartial = res === 'partial';
+        const resLabel = isWin ? 'WIN' : isBe ? 'BE' : (isPartial ? 'PARTIAL' : 'LOSS');
+        const resChip  = isWin ? 'chip-green' : (isBe || isPartial) ? 'chip-dim' : 'chip-red';
+
+        const entryDt = _fmtShortDate(r.timestamp);
+        const exitDt  = r.exit_time ? _fmtShortDate(r.exit_time) : '—';
+        const pnl = parseFloat(r.pnl || 0);
+        
+        const setup = r.setup_reason || 'Manual';
+        const exitReason = r.exit_reason ? `<div style="font-size:9px; color:var(--c-text-3); margin-top:2px;">${r.exit_reason}</div>` : '';
+
         return `<tr>
-            <td>${dt}</td>
-            <td>$${parseFloat(r.price || 0).toFixed(2)}</td>
-            <td style="color:${r.direction === 'bullish' ? 'var(--c-green)' : 'var(--c-red)'};">${r.direction === 'bullish' ? '↑ LONG' : '↓ SHORT'}</td>
-            <td>${parseFloat(r.score || 0).toFixed(1)}</td>
-            <td><span class="chip ${r.grade === 'A+' ? 'chip-gold' : r.grade === 'A' ? 'chip-green' : 'chip-dim'}">${r.grade || '—'}</span></td>
-            <td><span class="chip ${win ? 'chip-green' : 'chip-red'}">${win ? 'WIN' : 'LOSS'}</span></td>
-            <td style="color:${(r.pnl || 0) >= 0 ? 'var(--c-green)' : 'var(--c-red)'};">$${parseFloat(r.pnl || 0).toFixed(2)}</td>
+            <td>
+                <div style="font-weight:700;">$${parseFloat(r.price || 0).toFixed(2)}</div>
+                <div style="font-size:10px; color:var(--c-text-3);">${entryDt}</div>
+            </td>
+            <td>
+                <div style="font-weight:700;">$${parseFloat(r.exit_price || 0).toFixed(2)}</div>
+                <div style="font-size:10px; color:var(--c-text-3);">${exitDt}</div>
+            </td>
+            <td style="color:${isLong ? 'var(--c-green)' : 'var(--c-red)'}; font-weight:700;">${isLong ? '↑ LONG' : '↓ SHORT'}</td>
+            <td><span class="chip chip-dim" style="font-size:9px;">${r.timeframe || 'M5'}</span></td>
+            <td>
+                <div style="font-size:11px;">${setup}</div>
+                <div style="font-size:9px; color:var(--c-gold); opacity:0.8;">${r.risk_factors || ''}</div>
+            </td>
+            <td>
+                <span class="chip ${resChip}">${resLabel}</span>
+                ${exitReason}
+            </td>
+            <td style="color:${pnl >= 0 ? 'var(--c-green)' : 'var(--c-red)'}; font-weight:700;">$${pnl.toFixed(2)}</td>
         </tr>`;
     }).join('');
 }
@@ -354,7 +380,29 @@ function addAlertHistory(type, success) {
 // ── Utilities ───────────────────────────────────────────
 function _setEl(id, val) {
     const el = document.getElementById(id);
-    if (el) el.textContent = val;
+    if (el) el.innerHTML = val;
+}
+
+function _fmtDate(ts) {
+    if (!ts) return '—';
+    try {
+        const d = isNaN(ts) ? new Date(ts) : new Date(Number(ts) * 1000);
+        if (isNaN(d.getTime())) return '—';
+        return d.toLocaleString('en-IN', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+    } catch (e) {
+        return '—';
+    }
+}
+
+function _fmtShortDate(ts) {
+    if (!ts) return '—';
+    try {
+        const d = isNaN(ts) ? new Date(ts) : new Date(Number(ts) * 1000);
+        if (isNaN(d.getTime())) return '—';
+        return d.getDate() + '/' + (d.getMonth()+1) + ' ' + d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
+    } catch (e) {
+        return '—';
+    }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -386,35 +434,37 @@ class GoldAnalystSSE {
     }
 
     initCharts() {
-        if (typeof GoldCharts !== 'undefined') {
-            try {
-                this.charts = new GoldCharts('chart-container');
-                console.log('[SSE] GoldCharts instantiated.');
-            } catch (e) {
-                console.error('[SSE] GoldCharts init failed:', e);
-            }
-        } else {
-            console.warn('[SSE] GoldCharts not defined. Retrying in 500ms...');
-            setTimeout(() => this.initCharts(), 500);
-        }
+        console.log('[SSE] Charting engine suppressed for Strategy-First pivot.');
     }
 
     connect() {
         this.es = new EventSource('/api/stream');
 
-        this.es.addEventListener('tick',        e => this.onTick(JSON.parse(e.data)));
-        this.es.addEventListener('candle',      e => this.onCandle(JSON.parse(e.data)));
-        this.es.addEventListener('ict_update',  e => this.onICT(JSON.parse(e.data)));
-        this.es.addEventListener('confluence',  e => this.onConfluence(JSON.parse(e.data)));
-        this.es.addEventListener('health',      e => this.onHealth(JSON.parse(e.data)));
-        this.es.addEventListener('full_state',  e => this.onFullState(JSON.parse(e.data)));
-        this.es.addEventListener('indicators',  e => this.onIndicators(JSON.parse(e.data)));
+        this.es.addEventListener('tick',             e => this.onTick(JSON.parse(e.data)));
+        this.es.addEventListener('confluence_update', e => this.onConfluence(JSON.parse(e.data)));
+        this.es.addEventListener('strategy_history',  e => this.onStrategyHistory(JSON.parse(e.data)));
+        this.es.addEventListener('strategy_update',   e => this.onStrategyUpdate(JSON.parse(e.data)));
+        this.es.addEventListener('health',           e => this.onHealth(JSON.parse(e.data)));
+        this.es.addEventListener('full_state',       e => this.onFullState(JSON.parse(e.data)));
+        this.es.addEventListener('indicators',       e => this.onIndicators(JSON.parse(e.data)));
+        this.es.addEventListener('market_regime',    e => this.renderRegime(JSON.parse(e.data)));
 
-        this.es.onopen  = () => this.setStatus(true);
+        this.es.onopen  = () => {
+            this.setStatus(true);
+            this.fetchHistory(); // Fetch initial history on open
+        };
         this.es.onerror = () => {
             this.setStatus(false);
             setTimeout(() => this.connect(), 5000);
         };
+    }
+
+    async fetchHistory() {
+        try {
+            const resp = await fetch('/api/strategy/history');
+            const data = await resp.json();
+            this.onStrategyHistory(data);
+        } catch (e) { console.warn('[SSE] History fetch failed:', e); }
     }
 
     setStatus(live) {
@@ -446,60 +496,238 @@ class GoldAnalystSSE {
         el.textContent = '$' + data.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         el.className   = 'live-price ' + (data.price > prev ? 'up' : data.price < prev ? 'down' : '');
         setTimeout(() => { if (el) el.className = 'live-price'; }, 600);
-
-        if (this.charts) {
-            this.charts.updateCandle({ timeframe: this.charts.activeTimeframe, timestamp: Math.floor(Date.now() / 1000), close: data.price, open: data.price, high: data.price, low: data.price });
+    }
+    
+    onStrategyUpdate(data) {
+        if (data.confluence) {
+            this.onConfluence(data.confluence);
+        }
+        if (data.dr) {
+            this.renderDealingRange(data.dr);
+        }
+        if (data.levels) {
+            this.renderInstitutionalLevels(data.levels);
         }
     }
 
-    onCandle(data) {
-        if (this.charts) this.charts.handleCandleUpdate(data);
+    renderDealingRange(dr) {
+        if (!dr || !dr.is_valid) {
+            _setEl('dr-high', '—');
+            _setEl('dr-low',  '—');
+            _setEl('dr-eq',   '—');
+            _setEl('dr-ote',  'None in range');
+            return;
+        }
+        _setEl('dr-high', '$' + dr.range_high.toFixed(2));
+        _setEl('dr-low',  '$' + dr.range_low.toFixed(2));
+        _setEl('dr-eq',   '$' + dr.equilibrium.toFixed(2));
+        _setEl('dr-ote',  `$${dr.ote_low.toFixed(2)} – $${dr.ote_high.toFixed(2)}`);
     }
 
-    onICT(data) {
-        // Update checklist
-        const stepsEl = document.getElementById('ict-steps');
-        if (stepsEl && data.checklist) {
-            const labels = ['Asian Range', 'Liquidity Sweep', 'H1 FVG Return', 'M15 BOS', 'M5 OB Zone', 'Killzone Active'];
-            stepsEl.innerHTML = labels.map((lbl, i) => {
-                const ok = data.checklist[i];
-                return `<div class="ict-step ${ok ? 'pass' : ''}">${lbl}</div>`;
-            }).join('');
+    renderInstitutionalLevels(lc) {
+        if (!lc) return;
+        _setEl('bsl-target', lc.bsl ? '$' + lc.bsl.toFixed(2) : 'None in range');
+        _setEl('ssl-level',  lc.ssl ? '$' + lc.ssl.toFixed(2) : 'None in range');
+        
+        if (lc.fvg) {
+            _setEl('h1-fvg', `${lc.fvg.direction === 'bullish' ? 'Bullish' : 'Bearish'} $${lc.fvg.low.toFixed(2)}–$${lc.fvg.high.toFixed(2)} (${lc.fvg.size?.toFixed(2) || 0} pts)`);
+        } else {
+            _setEl('h1-fvg', 'None in range');
         }
-        if (data.grade) {
-            _setEl('ict-grade-badge', data.grade);
-            const badge = document.getElementById('ict-grade-badge');
-            if (badge) badge.className = `chip ${ data.grade.startsWith('A') ? 'chip-green' : data.grade === 'B' ? 'chip-gold' : 'chip-dim' }`;
+        
+        if (lc.ob) {
+            const status = lc.ob.status ? ` <span class="ob-status ${lc.ob.status.toLowerCase()}">(${lc.ob.status})</span>` : '';
+            _setEl('m15-ob', `$${lc.ob.low.toFixed(2)}–$${lc.ob.high.toFixed(2)}${status}`);
+        } else {
+            _setEl('m15-ob', 'None in range');
         }
     }
+
+    onCandle(data) {}
+    onCandleData(data) {}
+    onICT(data) {}
+
 
     onConfluence(data) {
-        if (data.total === undefined) return;
-        const score = data.total;
-        _setEl('confluence-score', score.toFixed(1));
-        _setEl('ticker-score', score.toFixed(1));
-        const fillEl = document.getElementById('confluence-fill');
-        if (fillEl) fillEl.style.width = ((score / (data.maximum || 12)) * 100) + '%';
+        if (!data || !data.swing) return;
+        window.lastConfluenceData = data;
+        
+        const mode = window.currentStrategyMode;
+        
+        let score = 0;
+        let max_score = 6.5;
+        let isSetup = false;
+        let isWatching = false;
+        let actionMsg = data.london_potential ? "⏰ LONDON SETUP FORMING" : "SCANNING";
+        
+        _setEl('ticker-dir', data.direction || '—');
 
         const chip = document.getElementById('trade-signal-chip');
-        if (chip) {
-            const isSetup = score >= 5;
-            chip.textContent  = isSetup ? '🎯 SETUP' : 'NO TRADE';
-            chip.className    = 'chip ' + (isSetup ? 'chip-green' : 'chip-red');
-            chip.style.cssText = '';
+        const matrixStatus = document.getElementById('matrix-status-chip');
+        const actionText = document.getElementById('matrix-action-text');
+        
+        if (mode === 'swing') {
+            score = data.swing.score;
+            max_score = data.swing.max_score || 6.5;
+            isSetup = data.swing.is_valid;
+            isWatching = score >= 4.0;
+            
+            _setEl('confluence-score', score.toFixed(1));
+            _setEl('ticker-score', score.toFixed(1));
+            
+            const fillEl = document.getElementById('confluence-fill');
+            if (fillEl) fillEl.style.width = Math.min((score / max_score) * 100, 100) + '%';
+            
+            this.renderMatrix(data.swing.factors);
+            
+            if (chip) {
+                chip.textContent = isSetup ? '🎯 SWING READY' : (isWatching ? '⚠️ WATCHING' : 'NO TRADE');
+                chip.className   = 'chip ' + (isSetup ? 'chip-gold' : (isWatching ? 'chip-green' : 'chip-red'));
+            }
+            if (matrixStatus) {
+                matrixStatus.textContent = isSetup ? '🎯 SWING READY' : (isWatching ? '⚠️ SWING WATCH' : 'SCANNING');
+                matrixStatus.className = 'chip ' + (isSetup ? 'chip-gold' : (isWatching ? 'chip-green' : 'chip-dim'));
+            }
+            if (actionText) {
+                actionText.textContent = isSetup ? '🎯 ENTRY READY' : (isWatching ? '⏳ WAITING FOR SWING ALIGNMENT' : '💤 NO SWING SETUP');
+                actionText.style.color = isSetup ? 'var(--bull)' : 'var(--amber)';
+            }
+            
+        } else if (mode === 'scalp') {
+            score = 0;
+            if (data.scalp.gates.bias.pass) score++;
+            if (data.scalp.gates.setup.pass) score++;
+            if (data.scalp.gates.trigger.pass) score++;
+            
+            max_score = 3;
+            isSetup = data.scalp.is_valid;
+            isWatching = score >= 2;
+            
+            _setEl('confluence-score', `${score} / 3`);
+            _setEl('ticker-score', `${score} Gates`);
+            
+            const fillEl = document.getElementById('confluence-fill');
+            if (fillEl) fillEl.style.width = Math.min((score / max_score) * 100, 100) + '%';
+            
+            this.renderScalpMatrix(data.scalp.gates);
+            
+            if (chip) {
+                chip.textContent = isSetup ? '🎯 SCALP READY' : (isWatching ? '⚠️ SCALP WATCH' : 'NO SCALP');
+                chip.className   = 'chip ' + (isSetup ? 'chip-gold' : (isWatching ? 'chip-green' : 'chip-red'));
+            }
+            if (matrixStatus) {
+                matrixStatus.textContent = isSetup ? '🎯 SCALP READY' : (isWatching ? '⚠️ SCALP WATCH' : 'SCANNING');
+                matrixStatus.className = 'chip ' + (isSetup ? 'chip-gold' : (isWatching ? 'chip-green' : 'chip-dim'));
+            }
+            if (actionText) {
+                actionText.textContent = isSetup ? '🎯 ENTRY CONFIRMED' : (isWatching ? '⏳ WAITING FOR M5 TRIGGER' : '💤 NO SCALP FORMED');
+                actionText.style.color = isSetup ? 'var(--bull)' : 'var(--amber)';
+            }
         }
 
-        if (data.factors) {
+        // London Setup Alert
+        const londonBanner = document.getElementById('london-setup-alert');
+        if (londonBanner) {
+            if (data.london_potential) {
+                londonBanner.textContent = data.london_msg;
+                londonBanner.style.display = 'block';
+            } else {
+                londonBanner.style.display = 'none';
+            }
+        }
+        
+        // Render Mini Factors List (uses Swing factors for baseline logic view)
+        if (data.swing && data.swing.factors) {
             const fEl = document.getElementById('confluence-factors');
             if (fEl) {
-                fEl.innerHTML = data.factors.slice(0, 6).map(f =>
-                    `<div style="display:flex;justify-content:space-between;padding:3px 0;">
-                        <span style="color:var(--c-text-2);">${f.name}</span>
-                        <span style="color:${f.score > 0 ? 'var(--c-green)' : 'var(--c-text-3)'};">${f.score > 0 ? '+' + f.score.toFixed(1) : '—'}</span>
+                const factorsArr = Object.entries(data.swing.factors).map(([key, val]) => ({
+                    name: key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+                    ...val
+                }));
+                fEl.innerHTML = factorsArr.slice(0, 5).map(f =>
+                    `<div style="display:flex;justify-content:space-between;padding:2px 0;">
+                        <span>${f.name}</span>
+                        <span style="color:${f.score > 0 ? 'var(--bull)' : 'var(--t3)'};">${f.score > 0 ? '✓' : '✗'}</span>
                     </div>`
                 ).join('');
             }
         }
+    }
+
+    renderMatrix(factors) {
+        const body = document.getElementById('matrix-body');
+        if (!body) return;
+
+        const rows = Object.entries(factors).map(([key, f]) => {
+            const name = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+            const passed = f.score > 0;
+            const status = passed ? '✅' : '❌';
+            const cls = passed ? 'passed' : 'failed';
+            const scoreText = f.score > 0 ? `+${f.score.toFixed(1)}` : '0.0';
+            
+            return `
+                <div class="matrix-row ${cls}">
+                    <div class="matrix-status">${status}</div>
+                    <div class="matrix-label">${name}</div>
+                    <div class="matrix-score">${scoreText}</div>
+                    <div class="matrix-detail">${f.detail || 'No confluence detected'}</div>
+                </div>
+            `;
+        });
+
+        body.innerHTML = rows.join('');
+    }
+
+    renderScalpMatrix(gates) {
+        const body = document.getElementById('matrix-body');
+        if (!body) return;
+
+        const rows = Object.entries(gates).map(([key, gate]) => {
+            const name = "GATE " + (key === 'bias' ? '1: H1 Bias' : key === 'setup' ? '2: M15 Setup' : '3: M5 Trigger');
+            const passed = gate.pass;
+            const status = gate.status || (passed ? '✅' : '❌');
+            const cls = passed ? 'passed' : 'failed';
+            
+            return `
+                <div class="matrix-row ${cls}">
+                    <div class="matrix-status">${status}</div>
+                    <div class="matrix-label">${name}</div>
+                    <div class="matrix-score">${passed ? 'PASS' : 'FAIL'}</div>
+                    <div class="matrix-detail">${gate.detail || ''}</div>
+                </div>
+            `;
+        });
+
+        body.innerHTML = rows.join('');
+    }
+
+    onStrategyHistory(history) {
+        const log = document.getElementById('strategy-history-log');
+        const count = document.getElementById('history-count');
+        if (!log) return;
+
+        if (count) count.textContent = `${history.length} SCANS`;
+
+        if (!history || history.length === 0) {
+            log.innerHTML = '<div class="empty-state">Waiting for the next candle close to begin logging history...</div>';
+            return;
+        }
+
+        log.innerHTML = history.map(h => {
+            const score = h.confluence.total || 0;
+            const isGlow = score >= 8;
+            return `
+                <div class="history-item" onclick="console.log('Viewing historical scan:', ${JSON.stringify(h)})">
+                    <div class="hist-main">
+                        <div class="hist-time">${h.time_ist} IST — $${h.price}</div>
+                        <div class="hist-setup">${h.setup_status || 'Scanning...'}</div>
+                    </div>
+                    <div class="hist-pnl" style="color:${isGlow ? 'var(--bull)' : 'var(--t2)'}">
+                        ${score.toFixed(1)}/12
+                    </div>
+                </div>
+            `;
+        }).join('');
     }
 
     onHealth(data) {
@@ -522,7 +750,62 @@ class GoldAnalystSSE {
             const atr = parseFloat(data.atr_h1).toFixed(2);
             _setEl('atr-value', '$' + atr);
         }
+        
+        // Institutional Levels (Fallback from direct indicators event)
+        if (data.liquidity_pools) {
+            const bsl = data.liquidity_pools.find(p => p.type === 'BSL');
+            const ssl = data.liquidity_pools.find(p => p.type === 'SSL');
+            if (bsl) _setEl('bsl-target', '$' + bsl.price.toFixed(2));
+            if (ssl) _setEl('ssl-level',  '$' + ssl.price.toFixed(2));
+        }
+        if (data.fvgs_h1 && data.fvgs_h1.length) {
+            const fvg = data.fvgs_h1[data.fvgs_h1.length - 1];
+            _setEl('h1-fvg', `$${fvg.low.toFixed(2)}–$${fvg.high.toFixed(2)}`);
+        }
+        if (data.obs_m15 && data.obs_m15.length) {
+            const ob = data.obs_m15[data.obs_m15.length - 1];
+            _setEl('m15-ob', `$${ob.low.toFixed(2)}–$${ob.high.toFixed(2)}`);
+        }
         _setEl('ticker-dir', data.direction || '—');
+    }
+    
+    renderRegime(data) {
+        if (!data) return;
+        const name = data.regime_type || 'SCANNING';
+        const color = data.hard_lock ? 'var(--c-red)' : 'var(--c-gold)';
+        
+        _setEl('regime-value', name);
+        const rv = document.getElementById('regime-value');
+        if (rv) rv.style.color = color;
+
+        _setEl('hard-lock-status', data.hard_lock ? 'ACTIVE' : 'OFF');
+        const hls = document.getElementById('hard-lock-status');
+        if (hls) {
+            hls.style.color = data.hard_lock ? 'var(--c-red)' : 'var(--c-green)';
+            hls.className = data.hard_lock ? 'blink' : '';
+        }
+
+        _setEl('regime-name', name.replace(/_/g, ' '));
+        _setEl('regime-desc', data.description || '');
+        _setEl('ui-adx', data.adx_h1 ? data.adx_h1.toFixed(2) : '—');
+        _setEl('ui-ema-cross', data.ema_20_50_cross || 'neutral');
+        _setEl('ui-momentum', data.candle_body_to_range ? (data.candle_body_to_range * 100).toFixed(1) + '%' : '—');
+        
+        const chip = document.getElementById('regime-chip');
+        if (chip) {
+            chip.textContent = data.hard_lock ? 'NO TRADE' : 'ANALYZED';
+            chip.className = 'chip ' + (data.hard_lock ? 'chip-red' : 'chip-gold');
+        }
+    }
+    
+    onMacro(data) {
+        if (data.macro_bias) {
+            _setEl('macro-bias', data.macro_bias);
+        }
+        if (data.dxy_value) {
+            const val = data.dxy_value + (data.dxy_dir ? ' (' + data.dxy_dir + ')' : '');
+            _setEl('dxy-value', val);
+        }
     }
 
     onFullState(data) {
@@ -539,8 +822,8 @@ class GoldAnalystSSE {
             }
         }
 
-        if (data.macro_bias) {
-            _setEl('macro-bias', data.macro_bias);
+        if (data.macro) {
+            this.onMacro(data.macro);
         }
 
         if (data.account) {
@@ -552,11 +835,26 @@ class GoldAnalystSSE {
             if (prog) prog.style.width = Math.min(100, (pnl / 300) * 100) + '%';
         }
 
-        if (data.indicators) {
-            _setEl('bsl-target', data.indicators.bsl || '—');
-            _setEl('ssl-level',  data.indicators.ssl || '—');
-            _setEl('h1-fvg',     data.indicators.fvg_h1 || '—');
-            _setEl('m15-ob',     data.indicators.ob_m15 || '—');
+        if (data.indicator_update) {
+            this.onIndicators(data.indicator_update);
+        }
+        if (data.market_regime) {
+            this.renderRegime(data.market_regime);
+        }
+        if (data.strategy_update) {
+            this.onStrategyUpdate(data.strategy_update);
+        }
+
+        if (data.health) {
+            this.onHealth(data.health);
+        }
+
+        if (data.confluence_update) {
+            this.onConfluence(data.confluence_update);
+        }
+
+        if (data.strategy_history) {
+            this.onStrategyHistory(data.strategy_history);
         }
     }
 }

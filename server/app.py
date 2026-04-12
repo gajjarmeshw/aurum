@@ -13,15 +13,14 @@ Routes:
 import json
 import time
 import logging
-from datetime import datetime, timezone, timedelta
-from pathlib import Path
+from datetime import datetime
 
 from flask import Flask, Response, render_template, request, jsonify, send_file
 from flask_cors import CORS
 
 from pipeline.event_bus import EventBus
 from server.sse_manager import SSEManager
-from psychology.pre_trade_check import evaluate_psychology, Q5_OPTIONS, Q5_LABELS
+from psychology.pre_trade_check import evaluate_psychology
 from core.session import get_session_info, should_block_trading
 from core.macro import fetch_macro_data
 from core.calendar import get_todays_events, is_nfp_day
@@ -30,15 +29,14 @@ from core.report import generate_report
 from journal import journal
 from backtest.historical_fetch import fetch_historical_data
 import config
-from backtest import walk_forward_engine, results_analyzer
+from backtest import walk_forward_engine
 from alerts.telegram_bot import TelegramBot
-import config
 
 _telegram = TelegramBot()
 
 logger = logging.getLogger(__name__)
 
-IST = timezone(timedelta(hours=5, minutes=30))
+IST = config.IST
 
 import pandas as pd
 
@@ -102,7 +100,7 @@ def create_app(event_bus: EventBus) -> Flask:
     @app.route("/api/status")
     def get_status():
         """Get current system status."""
-        session = get_session_info(get_todays_events())
+        session = get_session_info(news_events=get_todays_events())
         cooldown = _cooldown.check_cooldown()
         macro = fetch_macro_data()
 
@@ -119,6 +117,9 @@ def create_app(event_bus: EventBus) -> Flask:
         live_atr = live_indicators.get("atr_h1", 0) if live_indicators else 0
         live_confluence = latest.get("confluence_update", {})
         live_score = live_confluence.get("total", 0) if live_confluence else 0
+        
+        # v5.0 Market Regime
+        regime = latest.get("market_regime", {})
 
         block = should_block_trading(
             session,
@@ -136,6 +137,7 @@ def create_app(event_bus: EventBus) -> Flask:
             "score": live_score,
             "session": session.to_dict(),
             "cooldown": cooldown.to_dict(),
+            "regime": regime,
             "macro_bias": macro.get("macro_bias", ""),
             "feed_health": health,
             "account": account,
@@ -144,6 +146,13 @@ def create_app(event_bus: EventBus) -> Flask:
             "news_events": get_todays_events(),
             "timestamp": time.time(),
         })
+
+    @app.route("/api/strategy/history")
+    def get_strategy_history():
+        """Get the latest ICT strategy scan history."""
+        latest = sse_manager._latest_state
+        history = latest.get("strategy_history", [])
+        return jsonify(history)
 
     @app.route("/api/candles/<tf>")
     def get_candles(tf):
@@ -159,12 +168,15 @@ def create_app(event_bus: EventBus) -> Flask:
         # Filter indicators by timeframe if applicable
         # (This is a simplification; ideally indicators are stored per timeframe in the event bus)
         
+        def _ensure_dict(obj):
+            return vars(obj) if hasattr(obj, '__dict__') else obj
+
         return jsonify({
             "candles": candle_data,
             "overlays": {
-                "fvgs": [vars(f) for f in indicator_state.get("fvgs_h1", [])] if tf == "H1" else [],
-                "obs": [vars(o) for o in indicator_state.get("obs_m15", [])] if tf == "M15" else [],
-                "swings": [vars(s) for s in (indicator_state.get("swing_highs_h1", []) + indicator_state.get("swing_lows_h1", []))] if tf == "H1" else [],
+                "fvgs": [_ensure_dict(f) for f in indicator_state.get("fvgs_h1", [])] if tf == "H1" else [],
+                "obs": [_ensure_dict(o) for o in indicator_state.get("obs_m15", [])] if tf == "M15" else [],
+                "swings": [_ensure_dict(s) for s in (indicator_state.get("swing_highs_h1", []) + indicator_state.get("swing_lows_h1", []))] if tf == "H1" else [],
                 "ote": {
                     "high": dr_state.get("ote_high", 0),
                     "low": dr_state.get("ote_low", 0),
@@ -244,86 +256,50 @@ def create_app(event_bus: EventBus) -> Flask:
 
     @app.route("/api/backtest/run", methods=["POST"])
     def run_backtest():
-        """Trigger a walk-forward backtest."""
+        """Trigger a backtest using the Session Expansion strategy."""
         data = request.get_json()
-        tf = data.get("timeframe", "15min")
-        
-        # 1. Check if data exists
+        tf = data.get("timeframe", "5min")
+
+        # 1. Check data exists
         data_path = config.BASE_DIR / "backtest" / "data" / f"XAUUSD_{tf}.csv"
         if not data_path.exists():
             return jsonify({"error": "Historical data not found. Please fetch data first."}), 404
-            
-        # 2. Run Engine with proper date filtering
+
+        # 2. Load M5 data
         start_date = data.get("start_date")
         end_date = data.get("end_date")
-        engine = walk_forward_engine.BacktestEngine(str(data_path), tf, start_date=start_date, end_date=end_date)
-        setups = engine.run()
+        full_df = pd.read_csv(str(data_path))
+
+        # 3. Choose Engine
+        # Default to the institutional ICT engine (forensic-enabled)
+        # Use new_simulation only if explicitly requested (placeholder for future dropdown)
+        use_session_engine = data.get("strategy") == "session_expansion"
         
-        # 3. Simulate trades using real SL/TP based on ATR
-        from backtest.trade_simulator import TradeSimulator
-        sim = TradeSimulator()
-        
-        sim_results = []
-        for setup in setups:
-            # Check if we can open a new trade (one at a time)
-            if sim.open_trades:
-                continue
-                
-            atr = setup.get("atr", 15.0) or 15.0
-            price = setup["price"]
-            direction = setup.get("direction", "bullish")
-            sl = price - atr if direction == "bullish" else price + atr
-            tp = price + (atr * 2) if direction == "bullish" else price - (atr * 2)
-            trade_dir = "long" if direction == "bullish" else "short"
-            
-            # Open trade at setup entry
-            sim.open_trade(setup["timestamp"], price, sl, tp, trade_dir)
-            
-            # Feed subsequent bars to see if SL or TP is hit
-            bar_start = setup["bar_index"] + 1
-            for j in range(bar_start, min(bar_start + 100, len(engine.full_df))):
-                bar = engine.full_df.iloc[j]
-                sim.update(str(bar['datetime']), bar['high'], bar['low'], bar['close'])
-                if not sim.open_trades:  # Trade closed
-                    break
-            
-            # If trade is STILL open after look-ahead, force close it
-            for open_trade in sim.open_trades[:]:
-                sim._close_trade(open_trade, setup["timestamp"], price, "open", 0.0)
-            
-            # Get the result of THIS specific trade (the last closed one)
-            if sim.closed_trades:
-                t = sim.closed_trades[-1]
-                sim_results.append({
-                    "timestamp": setup["timestamp"],
-                    "price": setup["price"],
-                    "score": setup["score"],
-                    "grade": setup["grade"],
-                    "direction": setup.get("direction", ""),
-                    "result": t.result,
-                    "pnl": round(t.pnl, 2),
-                    "exit_price": t.exit_price,
-                })
-        
-        
-        # Serialize results
-        res_dir = config.BASE_DIR / "backtest" / "results"
-        res_dir.mkdir(parents=True, exist_ok=True)
-        res_path = res_dir / "latest_backtest.csv"
-        
-        if sim_results:
-            res_df = pd.DataFrame(sim_results)
-            res_df.to_csv(res_path, index=False)
-        elif res_path.exists():
-            res_path.unlink()
-        
-        summary = sim.get_summary()
+        if use_session_engine:
+            from backtest.new_simulation import run_session_backtest
+            result = run_session_backtest(full_df, start_date, end_date)
+            summary = result["summary"]
+        else:
+            from backtest.walk_forward_engine import BacktestEngine
+            from backtest.simulation_core import simulate_setups
+            engine = BacktestEngine(str(data_path), timeframe=tf, start_date=start_date, end_date=end_date)
+            setups = engine.run()
+            result = simulate_setups(setups, engine.full_df, tf_label=tf)
+            summary = result["summary"]
+
+        # 4. Save results to CSV for auditing
+        save_backtest_results(result["trades"], filename="latest_backtest.csv")
+
         return jsonify({
             "success": True,
-            "setups_found": len(setups),
-            "trades_simulated": len(sim_results),
+            "setups_found": len(result["trades"]),
+            "trades_simulated": len(result["trades"]),
             "summary": summary,
-            "msg": f"Backtest complete on {tf}. {len(sim_results)} trades simulated: {summary.get('wins',0)}W / {summary.get('losses',0)}L. PnL: {summary.get('total_pnl','$0')}"
+            "weekly_avg": result["weekly_avg"],
+            "msg": (
+                f"Backtest complete. {len(result['trades'])} trades simulated: "
+                f"{summary['wins']}W / {summary['losses']}L. PnL: {summary['total_pnl']}"
+            ),
         })
 
     @app.route("/api/backtest/manual/start", methods=["POST"])
@@ -373,6 +349,21 @@ def create_app(event_bus: EventBus) -> Flask:
         state["ict_checklist"] = _active_backtest.get_current_ict_checklist()
             
         return jsonify(state)
+
+    def save_backtest_results(trades, filename="latest_backtest.csv"):
+        """Export trades to CSV for analysis."""
+        import csv
+        path = config.BASE_DIR / "backtest" / "results" / filename
+        with open(path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            # Column names must match what renderBtTable() in sse.js expects
+            writer.writerow(["timestamp", "price", "direction", "session", "score", "grade", "result", "pnl", "exit_price", "exit_time", "setup_reason", "exit_reason", "risk_factors", "timeframe"])
+            for t in trades:
+                writer.writerow([
+                    t.entry_time, t.entry_price, t.direction, t.session, t.score, t.grade, 
+                    t.result, t.pnl, t.exit_price, t.exit_time, t.setup_reason, 
+                    t.exit_reason, t.risk_factors, t.timeframe
+                ])
 
     @app.route("/api/backtest/latest")
     def get_latest_backtest():

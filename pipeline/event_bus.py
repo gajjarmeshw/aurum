@@ -44,9 +44,11 @@ class EventBus:
         event = bus.subscribe(timeout=1.0)
     """
 
-    def __init__(self):
+    def __init__(self, latest_dict: dict | None = None):
         self._queue: multiprocessing.Queue = multiprocessing.Queue(maxsize=10_000)
-        self._latest: dict[str, Event] = {}   # only used within a single process for caching
+        # Use provided shared dict (from a Manager) or fallback to local dict
+        self._latest = latest_dict if latest_dict is not None else {}
+        self._manager = None # No longer storing manager to avoid pickling issues
 
     def publish(self, topic: str, data: dict | None = None):
         """Publish an event to all subscribers."""
@@ -60,7 +62,7 @@ class EventBus:
             except queue.Empty:
                 pass
             self._queue.put_nowait(event)
-        self._latest[topic] = event
+        self._latest[topic] = data or {}
 
     def subscribe(self, timeout: float = 1.0) -> Event | None:
         """
@@ -69,14 +71,18 @@ class EventBus:
         """
         try:
             event = self._queue.get(timeout=timeout)
-            self._latest[event.topic] = event
+            self._latest[event.topic] = event.data
             return event
         except queue.Empty:
             return None
 
-    def get_latest(self, topic: str) -> Event | None:
-        """Get the most recent event for a topic (local cache only)."""
+    def get_latest(self, topic: str) -> dict | None:
+        """Get the most recent data for a topic."""
         return self._latest.get(topic)
+
+    def get_all_latest(self) -> dict[str, Any]:
+        """Get the entire latest state cache."""
+        return dict(self._latest)
 
     def drain(self, max_events: int = 100) -> list[Event]:
         """Drain up to max_events from the queue without blocking."""
@@ -84,7 +90,7 @@ class EventBus:
         for _ in range(max_events):
             try:
                 event = self._queue.get_nowait()
-                self._latest[event.topic] = event
+                self._latest[event.topic] = event.data
                 events.append(event)
             except queue.Empty:
                 break
