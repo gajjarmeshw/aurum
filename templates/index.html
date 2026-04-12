@@ -15,7 +15,7 @@
   <link rel="apple-touch-icon" href="/static/icon-192.png">
 
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  <link rel="stylesheet" href="/static/style.css?v=12">
+  <link rel="stylesheet" href="/static/style.css?v=13">
 </head>
 <body>
 
@@ -33,7 +33,6 @@
     <div class="nav-pills">
       <button class="nav-pill active" onclick="switchTab('terminal')" id="tab-terminal">📊 Terminal</button>
       <button class="nav-pill" onclick="switchTab('backtest')" id="tab-backtest">🧪 Vault &amp; Backtest</button>
-      <button class="nav-pill" onclick="switchTab('alerts')" id="tab-alerts">🔔 Alerts</button>
     </div>
   </div>
 
@@ -164,7 +163,7 @@
         <div class="card">
           <div class="card-header">
             <span class="card-label">Performance Vault</span>
-            <span class="chip chip-gold">$500 Target</span>
+            <span class="chip chip-gold">$300 Target</span>
           </div>
           <div style="font-family:'JetBrains Mono'; font-size:32px; font-weight:800; color:var(--c-gold); line-height:1;">
             $<span id="weekly-pnl">0</span>
@@ -230,12 +229,9 @@
           <label class="form-label">To Date</label>
           <input type="date" id="bt-end-date" class="btn btn-secondary" style="width:100%;">
         </div>
-        <div class="form-group" style="display:flex; align-items:flex-end; gap:8px;">
-          <button class="btn btn-primary" style="flex:1;" onclick="initManualPlayer()">
-            <i class="fas fa-play"></i> Manual
-          </button>
-          <button class="btn btn-secondary" id="btn-run-bt" onclick="runAutoBacktest()">
-            <i class="fas fa-rocket"></i> Auto
+        <div class="form-group" style="display:flex; align-items:flex-end;">
+          <button class="btn btn-primary btn-block" id="btn-run-bt" onclick="runAutoBacktest()">
+            <i class="fas fa-rocket"></i> Run Backtest
           </button>
         </div>
       </div>
@@ -250,46 +246,7 @@
       </div>
     </div>
 
-    <!-- Manual Player View [NEW] -->
-    <div id="manual-player-view" style="display:none; margin-bottom:16px;">
-      <div class="card">
-        <div class="card-header">
-          <span class="card-label">Manual Replay Session</span>
-          <span class="chip chip-blue" id="bt-progress-text">Bar 0 / 0</span>
-        </div>
-        <div style="background:rgba(0,0,0,0.4); border-radius:8px; padding:12px; margin-bottom:12px;">
-          <div id="bt-action-banner" class="bt-banner">💤 Waiting for bar...</div>
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:12px;">
-            <div style="font-size:24px; font-weight:700; color:var(--c-gold);" id="bt-current-price">$0.00</div>
-            <div style="display:flex; gap:8px;">
-              <button class="btn btn-secondary" onclick="window.btPlayer.nextStep()">
-                <i class="fas fa-step-forward"></i> Next
-              </button>
-              <button class="btn btn-primary" id="btn-bt-play" onclick="window.btPlayer.togglePlay()">
-                <i class="fas fa-play"></i> Play
-              </button>
-            </div>
-          </div>
-        </div>
-        <div style="background:rgba(255,255,255,0.05); height:4px; border-radius:2px; margin-bottom:12px;">
-          <div id="bt-progress-bar" style="width:0%; height:100%; background:var(--c-blue); border-radius:2px; transition:width 0.2s;"></div>
-        </div>
-        
-        <!-- Manual Checklist & Confluence -->
-        <div class="grid-2" style="gap:12px;">
-          <div class="card" style="background:rgba(255,255,255,0.02); padding:10px;">
-            <div style="font-size:10px; color:var(--c-text-3); text-transform:uppercase; margin-bottom:8px;">ICT Sequence</div>
-            <div id="bt-checklist" class="checklist-mini"></div>
-          </div>
-          <div class="card" style="background:rgba(255,255,255,0.02); padding:10px;">
-            <div style="font-size:10px; color:var(--c-text-3); text-transform:uppercase; margin-bottom:8px;">Confluence Preview</div>
-            <div id="bt-confluence-mini"></div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Auto Results -->
+    <!-- Results -->
     <div id="bt-results-area" style="display:none;">
       <div class="stats-row" id="bt-stats-row">
         <div class="stat-box"><div class="val" id="bt-stat-total">—</div><div class="lbl">Total Setups</div></div>
@@ -327,7 +284,7 @@
 
   </div>
 <script src="/static/charts.js"></script>
-<script src="/static/sse.js?v=12"></script>
+<script src="/static/sse.js?v=14"></script>
 <script>
   // Register Service Worker for iPhone PWA
   if ('serviceWorker' in navigator) {

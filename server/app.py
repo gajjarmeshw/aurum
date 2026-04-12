@@ -150,9 +150,12 @@ def create_app(event_bus: EventBus) -> Flask:
     @app.route("/api/strategy/history")
     def get_strategy_history():
         """Get the latest ICT strategy scan history."""
-        latest = sse_manager._latest_state
-        history = latest.get("strategy_history", [])
-        return jsonify(history)
+        try:
+            latest = sse_manager._latest_state or {}
+            history = latest.get("strategy_history", [])
+            return jsonify(history)
+        except Exception:
+            return jsonify([])
 
     @app.route("/api/candles/<tf>")
     def get_candles(tf):

@@ -572,51 +572,6 @@ body {
 
 .modal-actions { display: flex; gap: 10px; margin-top: 24px; }
 
-/* ╔══════════════════════════╗
-   ║  BACKTEST PLAYER        ║
-   ╚══════════════════════════╝ */
-.player-layout {
-  display: grid;
-  grid-template-columns: 1fr 310px;
-  gap: 16px;
-}
-
-.player-chart-wrap {
-  display: flex; flex-direction: column;
-  border-radius: var(--r-lg);
-  overflow: hidden;
-  border: 1px solid var(--amber-border);
-  background: #000;
-}
-
-.player-header {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 16px;
-  background: rgba(255,140,0,0.04);
-  border-bottom: 1px solid var(--amber-border);
-  flex-wrap: wrap;
-}
-
-.player-controls {
-  display: flex; align-items: center; justify-content: center; gap: 18px;
-  padding: 14px 20px;
-  background: rgba(0,0,0,0.5);
-  border-top: 1px solid var(--amber-border);
-}
-
-.player-info {
-  flex: 1;
-  padding: 8px 12px;
-  border-radius: var(--r-sm);
-  font-size: 12px; font-weight: 600;
-  color: var(--t2);
-  transition: background 0.3s, color 0.3s;
-}
-.player-info.signal {
-  background: var(--amber-dim);
-  border: 1px solid var(--amber-border);
-  color: var(--amber);
-}
 
 /* ── Stats Row ─────────────────────────────────────── */
 .stats-row {
@@ -884,14 +839,6 @@ input[type="range"] { accent-color: var(--amber); cursor: pointer; }
     display: flex;
     justify-content: space-between;
     align-items: center;
-    cursor: pointer;
-    transition: all 0.2s;
-}
-
-.history-item:hover {
-    background: rgba(255,255,255,0.05);
-    border-color: var(--amber-border);
-    transform: translateX(6px);
 }
 
 .hist-main { display: flex; flex-direction: column; gap: 4px; }
@@ -935,4 +882,21 @@ input[type="range"] { accent-color: var(--amber); cursor: pointer; }
     font-size: 11px;
     color: var(--t2);
     line-height: 1.6;
+}
+
+/* ── Chip color aliases (JS uses these names) ────────── */
+.chip-gold  { background: var(--amber-dim); color: var(--amber); border-color: var(--amber-border); font-weight: 800; }
+.chip-green { background: var(--bull-dim);  color: var(--bull);  border-color: rgba(57,255,20,0.3); }
+.chip-red   { background: var(--bear-dim);  color: var(--bear);  border-color: rgba(255,45,85,0.3); }
+
+/* ── CSS variable aliases (JS inline styles use --c-* names) ── */
+:root {
+  --c-gold:   var(--amber);
+  --c-green:  var(--bull);
+  --c-red:    var(--bear);
+  --c-blue:   var(--blue);
+  --c-text:   var(--t1);
+  --c-text-2: var(--t2);
+  --c-text-3: var(--t3);
+  --c-border: var(--border);
 }

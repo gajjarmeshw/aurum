@@ -80,26 +80,16 @@ class FeedManager:
         })
         logger.info(f"Candle closed: {timeframe} O={candle.open:.2f} H={candle.high:.2f} L={candle.low:.2f} C={candle.close:.2f}")
         
-        # Publish full candle history for all TFs for initial chart loading
-        self._publish_candle_data()
-        
         # Compute and publish indicators and confluence ONLY on M5 close
         if timeframe == "M5":
             self._publish_live_indicators()
 
-    def _publish_candle_data(self):
-        """Publish full collections of candles for all timeframes."""
-        data = {}
-        for tf in config.TIMEFRAMES:
-            data[tf] = self.candle_builder.get_all_candles(tf)
-        self.event_bus.publish("candle_data", data)
-
-    def _publish_live_indicators(self):
+    def _publish_live_indicators(self, force: bool = False):
         """Compute all indicators and confluence for live dashboard."""
         try:
-            # User Fix: Centralized latch to prevent duplicate scans (tick + candle close overlap)
+            # Latch to prevent duplicate scans (tick + candle close overlap)
             now = time.time()
-            if now - self._last_scan_time < 5.0: # Minimum 5s between scans
+            if not force and now - self._last_scan_time < 5.0:
                 return
             self._last_scan_time = now
             
@@ -120,7 +110,6 @@ class FeedManager:
             indicators.m15_candles = m15
             indicators_dict = indicators.to_dict()
             self.event_bus.publish("indicators", indicators_dict)
-            self.event_bus.publish("indicator_update", indicators_dict) 
 
             # 2. Session & Macro
             news = get_todays_events()
@@ -174,7 +163,7 @@ class FeedManager:
                 "setup_status": ict_dict.get("setup_status", "Scanning...")
             }
             self._strategy_history.insert(0, scan_entry)
-            if len(self._strategy_history) > 50:
+            if len(self._strategy_history) > 20:
                 self._strategy_history.pop()
                 
             # Enrich confluence with fields live_strategy and alerts_manager need
@@ -185,7 +174,6 @@ class FeedManager:
             confluence["session_label"]   = session_dict.get("session_label", "Unknown")
             confluence["raw_score"]       = confluence  # factors already inside confluence dict
             
-            self.event_bus.publish("confluence", confluence)
             self.event_bus.publish("confluence_update", confluence)
             self.event_bus.publish("strategy_history", self._strategy_history)
             self.event_bus.publish("strategy_update", scan_entry) # Added for real-time matrix update
@@ -276,8 +264,15 @@ class FeedManager:
         If no tick received for FEED_TIMEOUT_SECONDS → failover to Finnhub.
         If primary recovers → switch back.
         """
+        _refresh_counter = 0
         while True:
             await asyncio.sleep(5)  # check every 5 seconds
+            _refresh_counter += 1
+
+            # Re-publish full indicator state every 60s so page refreshes get
+            # current data immediately without waiting for next M5 close.
+            if _refresh_counter % 12 == 0:  # every 12 × 5s = 60s
+                self._publish_live_indicators(force=True)
 
             primary_gap = self.health.primary.seconds_since_last_tick
             fallback_gap = self.health.fallback.seconds_since_last_tick
@@ -374,8 +369,7 @@ class FeedManager:
         self._ensure_historical_data()
 
         # Publish initial state for immediate UI populating
-        self._publish_candle_data()
-        self._publish_live_indicators()
+        self._publish_live_indicators(force=True)
 
         # Run all concurrently
         await asyncio.gather(

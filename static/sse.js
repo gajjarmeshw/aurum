@@ -15,8 +15,29 @@ function switchMainTimeframe(tf) {
     if (tfChip) tfChip.textContent = `${tf} LIVE`;
 }
 
+// ── Strategy Mode Toggle ────────────────────────────────
+window.currentStrategyMode = 'swing';
+
+function setUIMode(mode) {
+    window.currentStrategyMode = mode;
+    const swingBtn = document.getElementById('btn-mode-swing');
+    const scalpBtn = document.getElementById('btn-mode-scalp');
+    if (swingBtn) {
+        swingBtn.style.background = mode === 'swing' ? 'var(--amber)' : 'transparent';
+        swingBtn.style.color      = mode === 'swing' ? '#000' : '#aaa';
+    }
+    if (scalpBtn) {
+        scalpBtn.style.background = mode === 'scalp' ? 'var(--amber)' : 'transparent';
+        scalpBtn.style.color      = mode === 'scalp' ? '#000' : '#aaa';
+    }
+    // Re-render with current data if available
+    if (window.lastConfluenceData && window.analyst) {
+        window.analyst.onConfluence(window.lastConfluenceData);
+    }
+}
+
 // ── Tab Management ─────────────────────────────────────
-const TABS = ['terminal', 'backtest', 'alerts'];
+const TABS = ['terminal', 'backtest'];
 
 function switchTab(id) {
     TABS.forEach(t => {
@@ -57,24 +78,6 @@ function showBanner(msg, type = 'red') {
     setTimeout(() => b.classList.remove('show'), 6000);
 }
 
-// ── Manual Backtest bootstrap ───────────────────────────
-let btPlayer = null;
-
-function initManualPlayer() {
-    switchTab('backtest');
-
-    if (!btPlayer) {
-        btPlayer = new BacktestPlayer('manual-chart-container');
-        window.btPlayer = btPlayer;
-    }
-
-    // Show player area, hide auto results
-    document.getElementById('manual-player-view').style.display = 'block';
-    document.getElementById('bt-results-area').style.display    = 'none';
-
-    btPlayer.startManualSession();
-}
-
 // ── Auto Backtest ───────────────────────────────────────
 function runAutoBacktest() {
     const btn       = document.getElementById('btn-run-bt');
@@ -84,10 +87,7 @@ function runAutoBacktest() {
 
     if (!tf) { showBanner('Select a timeframe first.'); return; }
 
-    // Stop manual player if running
-    if (window.btPlayer) window.btPlayer.stopAuto();
-    document.getElementById('manual-player-view').style.display = 'none';
-    document.getElementById('bt-results-area').style.display    = 'none';
+    document.getElementById('bt-results-area').style.display = 'none';
 
     btn.disabled = true;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Running...';
@@ -410,10 +410,6 @@ function _fmtShortDate(ts) {
 // ═══════════════════════════════════════════════════════
 class GoldAnalystSSE {
     constructor() {
-        // ── Instantiate chart immediately ──────────────
-        this.charts = null;
-        this.initCharts();
-
         this.state  = {};
         this.connect();
         this.startClock();
@@ -433,21 +429,17 @@ class GoldAnalystSSE {
             .catch(() => {});
     }
 
-    initCharts() {
-        console.log('[SSE] Charting engine suppressed for Strategy-First pivot.');
-    }
-
     connect() {
         this.es = new EventSource('/api/stream');
 
-        this.es.addEventListener('tick',             e => this.onTick(JSON.parse(e.data)));
+        this.es.addEventListener('tick',              e => this.onTick(JSON.parse(e.data)));
         this.es.addEventListener('confluence_update', e => this.onConfluence(JSON.parse(e.data)));
         this.es.addEventListener('strategy_history',  e => this.onStrategyHistory(JSON.parse(e.data)));
         this.es.addEventListener('strategy_update',   e => this.onStrategyUpdate(JSON.parse(e.data)));
-        this.es.addEventListener('health',           e => this.onHealth(JSON.parse(e.data)));
-        this.es.addEventListener('full_state',       e => this.onFullState(JSON.parse(e.data)));
-        this.es.addEventListener('indicators',       e => this.onIndicators(JSON.parse(e.data)));
-        this.es.addEventListener('market_regime',    e => this.renderRegime(JSON.parse(e.data)));
+        this.es.addEventListener('health',            e => this.onHealth(JSON.parse(e.data)));
+        this.es.addEventListener('full_state',        e => this.onFullState(JSON.parse(e.data)));
+        this.es.addEventListener('indicators',        e => this.onIndicators(JSON.parse(e.data)));
+        this.es.addEventListener('market_regime',     e => this.renderRegime(JSON.parse(e.data)));
 
         this.es.onopen  = () => {
             this.setStatus(true);
@@ -542,11 +534,6 @@ class GoldAnalystSSE {
             _setEl('m15-ob', 'None in range');
         }
     }
-
-    onCandle(data) {}
-    onCandleData(data) {}
-    onICT(data) {}
-
 
     onConfluence(data) {
         if (!data || !data.swing) return;
@@ -717,7 +704,7 @@ class GoldAnalystSSE {
             const score = h.confluence.total || 0;
             const isGlow = score >= 8;
             return `
-                <div class="history-item" onclick="console.log('Viewing historical scan:', ${JSON.stringify(h)})">
+                <div class="history-item">
                     <div class="hist-main">
                         <div class="hist-time">${h.time_ist} IST — $${h.price}</div>
                         <div class="hist-setup">${h.setup_status || 'Scanning...'}</div>
