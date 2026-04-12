@@ -3,297 +3,323 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>AURUM | XAUUSD Analyst Pro</title>
-  <meta name="description" content="Institutional-grade XAUUSD ICT analysis terminal with real-time signal detection and backtesting engine.">
-
-  <!-- PWA / iPhone App -->
-  <link rel="manifest" href="/static/manifest.json">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="AURUM Pro">
-  <meta name="theme-color" content="#ff8c00">
+  <meta name="apple-mobile-web-app-title" content="AURUM">
+  <meta name="theme-color" content="#03020a">
+  <title>AURUM — XAUUSD TERMINAL</title>
+  <link rel="manifest" href="/static/manifest.json">
   <link rel="apple-touch-icon" href="/static/icon-192.png">
-
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  <link rel="stylesheet" href="/static/style.css?v=13">
+  <link rel="stylesheet" href="/static/style.css?v=16">
 </head>
 <body>
 
-<!-- Alert Banner -->
 <div id="alert-banner" class="alert-banner"><span id="alert-text"></span></div>
 
-<!-- ═══════════ HEADER ═══════════ -->
+<!-- ── HEADER ──────────────────────────────────────── -->
 <header class="header">
   <div class="logo">
-    <div class="logo-dot"></div>
+    <div class="logo-mark"></div>
     AURUM
   </div>
 
   <div class="header-center">
     <div class="nav-pills">
-      <button class="nav-pill active" onclick="switchTab('terminal')" id="tab-terminal">📊 Terminal</button>
-      <button class="nav-pill" onclick="switchTab('backtest')" id="tab-backtest">🧪 Vault &amp; Backtest</button>
+      <button class="nav-pill active" onclick="switchTab('terminal')" id="tab-terminal">TERMINAL</button>
+      <button class="nav-pill" onclick="switchTab('backtest')" id="tab-backtest">BACKTEST</button>
     </div>
   </div>
 
   <div class="header-right">
     <div class="live-price" id="live-price">$0.00</div>
     <div id="terminal-badge" class="terminal-badge offline">
-      <span>○</span> <span id="feed-status-text">OFFLINE</span>
+      <span id="feed-status-text">OFFLINE</span>
     </div>
     <div class="clock-display" id="clock">--:--:-- IST</div>
   </div>
 </header>
 
-<!-- Ticker Bar -->
+<!-- ── TICKER ───────────────────────────────────────── -->
 <div class="ticker-bar">
-  <div class="ticker-item">ATR (H1): <b id="atr-value">—</b></div>
-  <div class="ticker-item">Regime: <b id="regime-value" style="color:var(--c-gold);">SCANNING...</b></div>
-  <div class="ticker-item">Hard-Lock: <b id="hard-lock-status">OFF</b></div>
-  <div class="ticker-item">Session: <b id="session-name">—</b></div>
-  <div class="ticker-item" id="kz-timer-container">Killzone: <b id="kz-timer" class="pos">—</b></div>
+  <div class="ticker-item">H1 ATR <b id="atr-value">—</b></div>
+  <div class="ticker-item">REGIME <b id="regime-value" style="color:var(--v3)">SCANNING</b></div>
+  <div class="ticker-item">LOCK <b id="hard-lock-status" style="color:var(--bull)">OFF</b></div>
+  <div class="ticker-item">SESSION <b id="session-name">—</b></div>
+  <div class="ticker-item">KZ <b id="kz-timer" class="pos">—</b></div>
 </div>
 
 <main class="page">
 
-  <!-- ══════════════════════════════════════════
-       TAB 1: TERMINAL
-  ══════════════════════════════════════════ -->
-  <div id="view-terminal">
-    <div class="grid-main">
+<!-- ═══════════ TERMINAL ═══════════ -->
+<div id="view-terminal">
+<div class="grid-main">
 
-      <!-- ── Left Column ── -->
-      <div class="col">
+  <!-- LEFT COL ──────────────────── -->
+  <div class="col">
 
-        <!-- Strategy Matrix Card (High Fidelity) -->
-        <div class="card" id="strategy-matrix-card">
-          <div class="card-header">
-            <span class="card-label">Institutional Strategy Matrix</span>
-            <div style="display:flex; gap:8px; align-items:center;">
-              <div class="mode-toggle" style="background:rgba(0,0,0,0.3); border-radius:4px; border:1px solid rgba(255,255,255,0.1); display:flex; font-size:11px;">
-                <button id="btn-mode-swing" onclick="setUIMode('swing')" style="background:var(--c-gold); color:#000; border:none; padding:4px 8px; border-radius:3px; cursor:pointer; font-weight:600;">SWING</button>
-                <button id="btn-mode-scalp" onclick="setUIMode('scalp')" style="background:transparent; color:#aaa; border:none; padding:4px 8px; border-radius:3px; cursor:pointer; font-weight:600;">SCALP</button>
-              </div>
-              <span class="chip chip-gold" id="matrix-status-chip">SCANNING</span>
-              <span class="chip chip-green" id="matrix-tf-chip">M5/M15</span>
-            </div>
+    <!-- Strategy Matrix -->
+    <div class="card" id="strategy-matrix-card">
+      <div class="card-header">
+        <span class="card-label">Institutional Strategy Matrix</span>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div class="mode-toggle">
+            <button id="btn-mode-swing" onclick="setUIMode('swing')" class="active-mode">SWING</button>
+            <button id="btn-mode-scalp" onclick="setUIMode('scalp')">SCALP</button>
           </div>
-          <div id="london-setup-alert" style="display:none; background:var(--c-gold); color:rgba(0,0,0,0.85); padding:10px; font-weight:600; font-size:11px; letter-spacing:0.5px; text-align:center; border-bottom:1px solid rgba(255,255,255,0.1); line-height:1.4;">
-            ⏰ LONDON SETUP FORMING
-          </div>
-          <div class="matrix-grid" id="matrix-body">
-             <div class="matrix-row-loading">Initializing real-time ICT compute...</div>
-          </div>
-          <div class="matrix-footer">
-            <div id="matrix-action-text" class="action-bar">💤 WAITING FOR SETUP</div>
-          </div>
-        </div>
-
-        <!-- Dealing Range & Levels (Consolidated) -->
-        <div class="grid-2">
-          <div class="card">
-            <div class="card-header"><span class="card-label">HTF Dealing Range (H4)</span></div>
-            <div class="row"><span class="row-label">Range High</span><span class="row-value" id="dr-high">—</span></div>
-            <div class="row"><span class="row-label">OTE Zone</span><span class="row-value" style="color:var(--c-gold);" id="dr-ote">—</span></div>
-            <div class="row"><span class="row-label">Equilibrium</span><span class="row-value" id="dr-eq">—</span></div>
-            <div class="row"><span class="row-label">Range Low</span><span class="row-value" id="dr-low">—</span></div>
-          </div>
-          <div class="card">
-            <div class="card-header"><span class="card-label">Institutional Levels</span></div>
-            <div class="row"><span class="row-label">🎯 BSL</span><span class="row-value" id="bsl-target">—</span></div>
-            <div class="row"><span class="row-label">H1 FVG</span><span class="row-value" id="h1-fvg">—</span></div>
-            <div class="row"><span class="row-label">M15 OB</span><span class="row-value" id="m15-ob">—</span></div>
-            <div class="row"><span class="row-label">🔄 SSL</span><span class="row-value" id="ssl-level">—</span></div>
-          </div>
-        </div>
-
-        <!-- Strategy History Log -->
-        <div class="card" style="flex:1; min-height:400px; display:flex; flex-direction:column;">
-          <div class="card-header">
-            <span class="card-label">Strategy Scan History</span>
-            <span class="chip chip-dim" id="history-count">0 SESSIONS</span>
-          </div>
-          <div id="strategy-history-log" class="history-log">
-             <div class="empty-state">Waiting for the next candle close to begin logging history...</div>
-          </div>
+          <span class="chip chip-dim" id="matrix-status-chip">SCANNING</span>
+          <span class="chip chip-purple" id="matrix-tf-chip">M5/M15</span>
         </div>
       </div>
 
-      <!-- ── Right Sidebar ── -->
-      <div class="col">
+      <div id="london-setup-alert" style="display:none;border:1px solid var(--a);color:var(--a);padding:6px 12px;font-size:10px;font-weight:700;letter-spacing:2px;text-align:center;margin-bottom:8px;font-family:'Space Mono',monospace;">
+        ⏰ LONDON SETUP FORMING
+      </div>
 
-        <!-- Score Card (Premium) -->
-        <div class="card score-card">
-          <div class="card-header">
-            <span class="card-label">Confluence Edge</span>
-            <span class="chip" id="trade-signal-chip">NO TRADE</span>
-          </div>
-          <div class="score-display">
-             <div class="big-number" id="confluence-score">0.0</div>
-             <div class="score-meta" id="score-meta-desc">/ 6.5 POINTS</div>
-          </div>
-          <div class="conf-track"><div class="conf-fill" id="confluence-fill" style="width:0%"></div></div>
-          <div id="confluence-factors" class="factors-list">
-            Scanning institutional feeds...
-          </div>
-        </div>
+      <div class="matrix-grid" id="matrix-body">
+        <div class="matrix-row-loading">_ INITIALIZING ICT ENGINE _</div>
+      </div>
 
-        <!-- Market Regime Intelligence (v5.0) -->
-        <div class="card">
-          <div class="card-header">
-            <span class="card-label">Market Intelligence (v5.0)</span>
-            <span class="chip chip-gold" id="regime-chip">SCANNING</span>
-          </div>
-          <div style="padding:10px 0;">
-            <div id="regime-name" style="font-size:18px; font-weight:700; color:var(--c-gold); margin-bottom:4px;">INITIALIZING...</div>
-            <div id="regime-desc" style="font-size:10px; color:var(--c-text-3); line-height:1.4;">Analyzing ADX, EMA, and ATR for regime classification.</div>
-          </div>
-          <div class="row" style="border-top:1px solid rgba(255,255,255,0.05); padding-top:8px;">
-            <span class="row-label">ADX (H1)</span><span class="row-value" id="ui-adx">—</span>
-          </div>
-          <div class="row">
-            <span class="row-label">EMA 20/50</span><span class="row-value" id="ui-ema-cross">—</span>
-          </div>
-          <div class="row">
-            <span class="row-label">Momentum</span><span class="row-value" id="ui-momentum">—</span>
-          </div>
-        </div>
+      <div class="matrix-footer">
+        <div id="matrix-action-text" class="action-bar">_ WAITING FOR SETUP _</div>
+      </div>
+    </div>
 
-        <!-- Weekly Performance -->
-        <div class="card">
-          <div class="card-header">
-            <span class="card-label">Performance Vault</span>
-            <span class="chip chip-gold">$300 Target</span>
-          </div>
-          <div style="font-family:'JetBrains Mono'; font-size:32px; font-weight:800; color:var(--c-gold); line-height:1;">
-            $<span id="weekly-pnl">0</span>
-          </div>
-          <div class="progress-track" style="margin-top:10px;">
-            <div class="progress-fill" id="weekly-progress" style="width:0%"></div>
-          </div>
-          <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--c-text-3); margin-bottom:12px;">
-            <span>$0</span><span>$300</span>
-          </div>
-          <div class="row"><span class="row-label">Today P&L</span><span class="row-value" id="daily-pnl">$0</span></div>
-          <div class="row"><span class="row-label">Sessions Today</span><span class="row-value"><span id="trades-today">0</span>/2</span></div>
-        </div>
+    <!-- Range + Levels -->
+    <div class="grid-2">
+      <div class="card" style="border-top:2px solid var(--v);">
+        <div class="card-header"><span class="card-label">HTF Dealing Range</span></div>
+        <div class="row"><span class="row-label">Range High</span><span class="row-value" id="dr-high">—</span></div>
+        <div class="row"><span class="row-label">OTE Zone</span><span class="row-value" style="color:var(--a)" id="dr-ote">—</span></div>
+        <div class="row"><span class="row-label">Equilibrium</span><span class="row-value" id="dr-eq">—</span></div>
+        <div class="row"><span class="row-label">Range Low</span><span class="row-value" id="dr-low">—</span></div>
+      </div>
+      <div class="card" style="border-top:2px solid var(--cy);">
+        <div class="card-header"><span class="card-label">Institutional Levels</span></div>
+        <div class="row"><span class="row-label">BSL Target</span><span class="row-value" id="bsl-target">—</span></div>
+        <div class="row"><span class="row-label">H1 FVG</span><span class="row-value" id="h1-fvg">—</span></div>
+        <div class="row"><span class="row-label">M15 OB</span><span class="row-value" id="m15-ob">—</span></div>
+        <div class="row"><span class="row-label">SSL Level</span><span class="row-value" id="ssl-level">—</span></div>
+      </div>
+    </div>
 
-        <!-- Trade Ops -->
-        <div class="card">
-          <div class="card-header">
-            <span class="card-label">Trade Operations</span>
-            <span class="chip chip-dim" id="psych-badge">UNLOCKED</span>
-          </div>
-          <div class="col" style="gap:10px;">
-            <button class="btn btn-secondary btn-block" onclick="openModal('psych-modal')">
-              <i class="fas fa-brain"></i> Psychology Check
-            </button>
-            <button class="btn btn-primary btn-block" id="btn-generate-report" disabled onclick="handleGenerateReport()">
-              <i class="fas fa-file-contract"></i> Generate Analyst Report
-            </button>
-            <div style="font-size:10px; color:var(--c-text-3); text-align:center;">
-              Complete psychology check to unlock report
-            </div>
-          </div>
-        </div>
-
+    <!-- Scan History -->
+    <div class="card" style="display:flex;flex-direction:column;">
+      <div class="card-header">
+        <span class="card-label">Scan History</span>
+        <span class="chip chip-dim" id="history-count">0 SCANS</span>
+      </div>
+      <div id="strategy-history-log" class="history-log">
+        <div class="empty-state">_ WAITING FOR CANDLE CLOSE _</div>
       </div>
     </div>
   </div>
 
-  <!-- ══════════════════════════════════════════
-       TAB 2: VAULT & BACKTEST
-  ══════════════════════════════════════════ -->
-  <div id="view-backtest" style="display:none;">
+  <!-- RIGHT COL ─────────────────── -->
+  <div class="col">
 
-    <!-- Config Bar -->
-    <div class="card mb">
+    <!-- Confluence Edge -->
+    <div class="card score-card">
       <div class="card-header">
-        <span class="card-label">Historical Simulation Engine</span>
-        <span class="chip chip-gold">AURUM v5.0</span>
+        <span class="card-label">Confluence Score</span>
+        <span class="chip chip-red" id="trade-signal-chip">NO TRADE</span>
       </div>
-      <div class="grid-4" style="margin-bottom:16px;">
-        <div class="form-group">
-          <label class="form-label">Timeframe</label>
-          <select id="bt-timeframe" class="btn btn-secondary" style="width:100%; text-align:left; cursor:pointer;">
-            <option value="5min">5 Minute (M5)</option>
-            <option value="15min" selected>15 Minute (M15)</option>
-            <option value="1h">1 Hour (H1)</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label">From Date</label>
-          <input type="date" id="bt-start-date" class="btn btn-secondary" style="width:100%;" value="2026-02-18">
-        </div>
-        <div class="form-group">
-          <label class="form-label">To Date</label>
-          <input type="date" id="bt-end-date" class="btn btn-secondary" style="width:100%;">
-        </div>
-        <div class="form-group" style="display:flex; align-items:flex-end;">
-          <button class="btn btn-primary btn-block" id="btn-run-bt" onclick="runAutoBacktest()">
-            <i class="fas fa-rocket"></i> Run Backtest
-          </button>
+      <div class="score-display">
+        <div class="big-number" id="confluence-score">0.0</div>
+        <div class="score-meta" id="score-meta-desc">/ 6.5</div>
+      </div>
+      <div class="conf-track"><div class="conf-fill" id="confluence-fill" style="width:0%"></div></div>
+      <div id="confluence-factors" class="factors-list" style="margin-top:12px;">
+        Scanning institutional feeds...
+      </div>
+    </div>
+
+    <!-- Market Intelligence -->
+    <div class="card" style="border-top:2px solid var(--v);">
+      <div class="card-header">
+        <span class="card-label">Market Intelligence</span>
+        <span class="chip chip-dim" id="regime-chip">SCANNING</span>
+      </div>
+      <div class="regime-name-big" id="regime-name">INITIALIZING</div>
+      <div style="font-size:10px;color:var(--t3);margin-bottom:12px;line-height:1.6;font-family:'Space Mono',monospace;" id="regime-desc">ANALYZING ADX / EMA / ATR</div>
+      <div class="row"><span class="row-label">ADX (H1)</span><span class="row-value" id="ui-adx">—</span></div>
+      <div class="row"><span class="row-label">EMA Cross</span><span class="row-value" id="ui-ema-cross">—</span></div>
+      <div class="row"><span class="row-label">Momentum</span><span class="row-value" id="ui-momentum">—</span></div>
+    </div>
+
+    <!-- Performance Vault -->
+    <div class="card" style="border-top:2px solid var(--a);">
+      <div class="card-header">
+        <span class="card-label">Weekly P&amp;L</span>
+        <span class="chip chip-gold">$300 TARGET</span>
+      </div>
+      <div class="pnl-big" id="weekly-pnl-display">$<span id="weekly-pnl">0</span></div>
+      <div class="progress-track" style="margin:12px 0 4px;">
+        <div class="progress-fill" id="weekly-progress" style="width:0%"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-family:'Space Mono',monospace;font-size:9px;color:var(--t3);margin-bottom:12px;">
+        <span>$0</span><span>$300</span>
+      </div>
+      <div class="row"><span class="row-label">Today P&amp;L</span><span class="row-value" id="daily-pnl">$0</span></div>
+      <div class="row"><span class="row-label">Sessions</span><span class="row-value"><span id="trades-today">0</span> / 2</span></div>
+    </div>
+
+    <!-- Trade Ops -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-label">Trade Operations</span>
+        <span class="chip chip-green" id="psych-badge">UNLOCKED</span>
+      </div>
+      <div class="col" style="gap:8px;">
+        <button class="btn btn-secondary btn-block" onclick="openModal('psych-modal')">
+          <i class="fas fa-brain"></i>&nbsp; Psychology Check
+        </button>
+        <button class="btn btn-primary btn-block" id="btn-generate-report" disabled onclick="handleGenerateReport()">
+          <i class="fas fa-file-alt"></i>&nbsp; Generate Report
+        </button>
+        <div style="font-size:9px;color:var(--t3);text-align:center;letter-spacing:0.5px;font-family:'Space Mono',monospace;">
+          COMPLETE PSYCH CHECK TO UNLOCK
         </div>
       </div>
-      <div style="font-size:11px; color:var(--c-gold); display:flex; align-items:center; justify-content:space-between; width:100%;">
-        <div style="display:flex; align-items:center; gap:6px;">
-          <i class="fas fa-database"></i>
-          Available: <strong id="bt-data-min">loading...</strong> — <strong id="bt-data-max">loading...</strong>
-        </div>
-        <button class="btn btn-secondary" style="padding:4px 10px; font-size:10px;" id="btn-refresh-data" onclick="refreshBacktestData()">
-          <i class="fas fa-sync-alt"></i> Refresh Data
+    </div>
+
+  </div>
+</div>
+</div>
+
+<!-- ═══════════ BACKTEST ═══════════ -->
+<div id="view-backtest" style="display:none;">
+  <div class="card mb" style="border-top:2px solid var(--v);">
+    <div class="card-header">
+      <span class="card-label">Historical Simulation Engine</span>
+      <span class="chip chip-purple">AURUM v5.0</span>
+    </div>
+    <div class="grid-4" style="margin-bottom:14px;">
+      <div class="form-group">
+        <label class="form-label">Timeframe</label>
+        <select id="bt-timeframe">
+          <option value="5min">5 Min (M5)</option>
+          <option value="15min" selected>15 Min (M15)</option>
+          <option value="1h">1 Hour (H1)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">From</label>
+        <input type="date" id="bt-start-date" value="2026-02-18">
+      </div>
+      <div class="form-group">
+        <label class="form-label">To</label>
+        <input type="date" id="bt-end-date">
+      </div>
+      <div class="form-group" style="display:flex;align-items:flex-end;">
+        <button class="btn btn-primary btn-block" id="btn-run-bt" onclick="runAutoBacktest()">
+          <i class="fas fa-rocket"></i>&nbsp; RUN
         </button>
       </div>
     </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;font-family:'Space Mono',monospace;font-size:10px;color:var(--v3);">
+      <span>DATA: <strong id="bt-data-min">—</strong> / <strong id="bt-data-max">—</strong></span>
+      <button class="btn btn-secondary" style="padding:3px 10px;font-size:10px;" id="btn-refresh-data" onclick="refreshBacktestData()">
+        <i class="fas fa-sync-alt"></i> REFRESH
+      </button>
+    </div>
+  </div>
 
-    <!-- Results -->
-    <div id="bt-results-area" style="display:none;">
-      <div class="stats-row" id="bt-stats-row">
-        <div class="stat-box"><div class="val" id="bt-stat-total">—</div><div class="lbl">Total Setups</div></div>
-        <div class="stat-box"><div class="val" id="bt-stat-winrate">—</div><div class="lbl">Win Rate</div></div>
-        <div class="stat-box"><div class="val" id="bt-stat-ratio">—</div><div class="lbl">W / L</div></div>
-        <div class="stat-box"><div class="val" id="bt-stat-pnl" style="color:var(--c-green);">$0</div><div class="lbl">Total PnL</div></div>
-        <div class="stat-box"><div class="val" id="bt-stat-weekly">—</div><div class="lbl">Avg / Week</div></div>
+  <div id="bt-results-area" style="display:none;">
+    <div class="stats-row">
+      <div class="stat-box"><div class="val" id="bt-stat-total">—</div><div class="lbl">Setups</div></div>
+      <div class="stat-box"><div class="val" id="bt-stat-winrate">—</div><div class="lbl">Win Rate</div></div>
+      <div class="stat-box"><div class="val" id="bt-stat-ratio">—</div><div class="lbl">W / L</div></div>
+      <div class="stat-box"><div class="val" id="bt-stat-pnl" style="color:var(--bull)">$0</div><div class="lbl">Total PnL</div></div>
+      <div class="stat-box"><div class="val" id="bt-stat-weekly">—</div><div class="lbl">Avg/Week</div></div>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <span class="card-label">Trade Results</span>
+        <div class="filter-row">
+          <select id="filter-grade" onchange="filterResults()" style="padding:4px 8px;font-size:10px;">
+            <option value="all">All Grades</option>
+            <option value="Swing">Swing</option>
+            <option value="Scalp">Scalp</option>
+          </select>
+          <select id="filter-result" onchange="filterResults()" style="padding:4px 8px;font-size:10px;">
+            <option value="all">All Results</option>
+            <option value="win">Wins</option>
+            <option value="loss">Losses</option>
+            <option value="be">Breakeven</option>
+          </select>
+        </div>
       </div>
-      <div class="card">
-        <div class="card-header">
-          <span class="card-label">Trade Results</span>
-          <div class="filter-row" style="margin:0;">
-            <select id="filter-grade" onchange="filterResults()" style="background:rgba(255,255,255,0.05); border:1px solid var(--c-border); color:var(--c-text); padding:5px 10px; border-radius:6px; font-size:11px;">
-              <option value="all">All Grades</option>
-              <option value="Swing">Swing</option><option value="Scalp">Scalp</option>
-            </select>
-            <select id="filter-result" onchange="filterResults()" style="background:rgba(255,255,255,0.05); border:1px solid var(--c-border); color:var(--c-text); padding:5px 10px; border-radius:6px; font-size:11px;">
-              <option value="all">All Results</option>
-              <option value="win">Wins</option><option value="loss">Losses</option><option value="be">Breakeven</option>
-            </select>
-          </div>
-        </div>
-        <div style="overflow-x:auto;">
-          <table class="results-table">
-            <thead>
-              <tr>
-                <th>Entry</th><th>Exit</th><th>Direction</th><th>TF</th><th>Setup</th><th>Result</th><th>PnL</th>
-              </tr>
-            </thead>
-            <tbody id="bt-tbody"></tbody>
-          </table>
-        </div>
+      <div style="overflow-x:auto;">
+        <table class="results-table">
+          <thead>
+            <tr><th>Entry</th><th>Exit</th><th>Dir</th><th>TF</th><th>Setup</th><th>Result</th><th>PnL</th></tr>
+          </thead>
+          <tbody id="bt-tbody"></tbody>
+        </table>
       </div>
     </div>
-
   </div>
+</div>
+
+<!-- ── MODALS ──────────────────────────────────────── -->
+<div id="psych-modal" class="modal-backdrop">
+  <div class="modal">
+    <div class="modal-title">Psychology Check</div>
+    <div class="form-group">
+      <label class="form-label">Feeling today (1–10)</label>
+      <input type="range" id="feeling-slider" min="1" max="10" value="7" style="width:100%;margin:8px 0;">
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--t3);font-family:'Space Mono',monospace;">
+        <span>1</span><b id="feeling-val" style="color:var(--v3)">7</b><span>10</span>
+      </div>
+    </div>
+    <div class="toggle-row">
+      <span style="font-size:12px;">Slept well?</span>
+      <div class="toggle-switch" id="toggle-sleep" onclick="this.classList.toggle('on')"></div>
+    </div>
+    <div class="toggle-row">
+      <span style="font-size:12px;">Financial stress?</span>
+      <div class="toggle-switch" id="toggle-stress" onclick="this.classList.toggle('on')"></div>
+    </div>
+    <div class="form-group" style="margin-top:14px;">
+      <label class="form-label">Last trade</label>
+      <div class="radio-list">
+        <label class="radio-item"><input type="radio" name="last-trade" value="win"> Win</label>
+        <label class="radio-item"><input type="radio" name="last-trade" value="loss"> Loss</label>
+        <label class="radio-item"><input type="radio" name="last-trade" value="none" checked> No recent trade</label>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('psych-modal')" style="flex:1;">Cancel</button>
+      <button class="btn btn-primary" onclick="submitPsychology()" style="flex:2;">Submit</button>
+    </div>
+  </div>
+</div>
+
+<div id="screenshot-modal" class="modal-backdrop">
+  <div class="modal">
+    <div class="modal-title">Generate Report</div>
+    <p style="color:var(--t2);font-size:12px;margin-bottom:16px;line-height:1.6;">
+      Confirm you have reviewed all levels on the dashboard before generating the analyst report.
+    </p>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('screenshot-modal')" style="flex:1;">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmAndReport()" style="flex:2;">Generate</button>
+    </div>
+  </div>
+</div>
+
+</main>
+
 <script src="/static/charts.js"></script>
-<script src="/static/sse.js?v=14"></script>
+<script src="/static/sse.js?v=16"></script>
 <script>
-  // Register Service Worker for iPhone PWA
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/static/sw.js')
-        .then(r => console.log('[PWA] SW registered:', r.scope))
-        .catch(e => console.warn('[PWA] SW failed:', e));
-    });
-  }
+  const slider = document.getElementById('feeling-slider');
+  if (slider) slider.addEventListener('input', () => {
+    document.getElementById('feeling-val').textContent = slider.value;
+  });
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/static/sw.js').catch(()=>{});
 </script>
 </body>
 </html>

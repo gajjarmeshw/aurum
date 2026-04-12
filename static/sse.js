@@ -818,6 +818,8 @@ class GoldAnalystSSE {
             _setEl('weekly-pnl', pnl.toFixed(0));
             _setEl('daily-pnl', '$' + (data.account.daily_pnl || 0).toFixed(0));
             _setEl('trades-today', data.account.trades_today || 0);
+            const pnlBig = document.getElementById('weekly-pnl-display');
+            if (pnlBig) pnlBig.className = 'pnl-big ' + (pnl > 0 ? 'pos' : pnl < 0 ? 'neg' : '');
             const prog = document.getElementById('weekly-progress');
             if (prog) prog.style.width = Math.min(100, (pnl / 300) * 100) + '%';
         }
