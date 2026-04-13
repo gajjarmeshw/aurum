@@ -172,7 +172,6 @@ class FeedManager:
             confluence["price"]           = round(current_price, 2)
             confluence["killzone_active"] = session_dict.get("killzone_active", False)
             confluence["session_label"]   = session_dict.get("session_label", "Unknown")
-            confluence["raw_score"]       = confluence  # factors already inside confluence dict
             
             self.event_bus.publish("confluence_update", confluence)
             self.event_bus.publish("strategy_history", self._strategy_history)
@@ -275,7 +274,6 @@ class FeedManager:
                 self._publish_live_indicators(force=True)
 
             primary_gap = self.health.primary.seconds_since_last_tick
-            fallback_gap = self.health.fallback.seconds_since_last_tick
 
             if not self._using_fallback:
                 # Currently on primary — check if it dropped
