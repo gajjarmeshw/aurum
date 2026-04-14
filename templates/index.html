@@ -12,7 +12,7 @@
   <link rel="manifest" href="/static/manifest.json">
   <link rel="apple-touch-icon" href="/static/icon-192.png">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  <link rel="stylesheet" href="/static/style.css?v=16">
+  <link rel="stylesheet" href="/static/style.css?v=17">
 </head>
 <body>
 
@@ -28,6 +28,7 @@
   <div class="header-center">
     <div class="nav-pills">
       <button class="nav-pill active" onclick="switchTab('terminal')" id="tab-terminal">TERMINAL</button>
+      <button class="nav-pill" onclick="switchTab('charts')" id="tab-charts">CHARTS</button>
       <button class="nav-pill" onclick="switchTab('backtest')" id="tab-backtest">BACKTEST</button>
     </div>
   </div>
@@ -188,6 +189,29 @@
 </div>
 </div>
 
+<!-- ═══════════ CHARTS ═══════════ -->
+<div id="view-charts" style="display:none;">
+  <div class="chart-shell">
+    <div class="chart-toolbar">
+      <div class="chart-tf-group">
+        <button class="chart-tf-btn active" data-tf="M5"  onclick="chartSwitchTF('M5')">M5</button>
+        <button class="chart-tf-btn"        data-tf="M15" onclick="chartSwitchTF('M15')">M15</button>
+        <button class="chart-tf-btn"        data-tf="H1"  onclick="chartSwitchTF('H1')">H1</button>
+        <button class="chart-tf-btn"        data-tf="H4"  onclick="chartSwitchTF('H4')">H4</button>
+      </div>
+      <div class="chart-overlay-legend">
+        <span class="legend-dot" style="background:rgba(0,255,163,0.7)"></span><span>FVG/OB Bull</span>
+        <span class="legend-dot" style="background:rgba(255,45,107,0.7)"></span><span>FVG/OB Bear</span>
+        <span class="legend-dot" style="background:#7c3aed"></span><span>Range</span>
+        <span class="legend-dot" style="background:#00ffa3"></span><span>BSL</span>
+        <span class="legend-dot" style="background:#ff2d6b"></span><span>SSL</span>
+      </div>
+      <span class="chip chip-dim" id="chart-loading-chip" style="display:none;">LOADING…</span>
+    </div>
+    <div id="chart-container" class="chart-container"></div>
+  </div>
+</div>
+
 <!-- ═══════════ BACKTEST ═══════════ -->
 <div id="view-backtest" style="display:none;">
   <div class="card mb" style="border-top:2px solid var(--v);">
@@ -312,7 +336,8 @@
 
 </main>
 
-<script src="/static/charts.js"></script>
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<script src="/static/charts.js?v=1"></script>
 <script src="/static/sse.js?v=16"></script>
 <script>
   const slider = document.getElementById('feeling-slider');

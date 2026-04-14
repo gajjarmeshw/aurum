@@ -10,9 +10,8 @@ Persists to disk every 15 minutes for recovery.
 import time
 import json
 import logging
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 from collections import deque
-from pathlib import Path
 
 import config
 
@@ -199,12 +198,12 @@ class CandleBuilder:
             df = pd.read_csv(csv_path)
             if df.empty: return
             
-            # STALENESS CHECK: Don't load if data is from months ago (prevents 2025 ghost data)
+            # STALENESS WARN: Log if last bar is old — gap-fill at startup handles this
             from datetime import datetime, timezone as dt_timezone
             last_bar_dt = pd.to_datetime(df.iloc[-1]['datetime'])
-            if (datetime.now() - last_bar_dt.replace(tzinfo=None)).days > 30:
-                logger.warning(f"CSV data for {timeframe} is stale (last bar: {last_bar_dt}). Ignoring.")
-                return
+            days_old = (datetime.now() - last_bar_dt.replace(tzinfo=None)).days
+            if days_old > 3:
+                logger.warning(f"CSV data for {timeframe} is {days_old}d old (last bar: {last_bar_dt}) — gap-fill should have run")
                 
             df = df.tail(config.CANDLE_HISTORY_SIZE)
             for _, row in df.iterrows():

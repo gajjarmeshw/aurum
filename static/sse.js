@@ -37,7 +37,7 @@ function setUIMode(mode) {
 }
 
 // ── Tab Management ─────────────────────────────────────
-const TABS = ['terminal', 'backtest'];
+const TABS = ['terminal', 'charts', 'backtest'];
 
 function switchTab(id) {
     TABS.forEach(t => {
@@ -46,6 +46,7 @@ function switchTab(id) {
         if (view) view.style.display = t === id ? 'block' : 'none';
         if (btn)  btn.classList.toggle('active', t === id);
     });
+    if (id === 'charts') initChartTab();
 }
 
 // ── Modal Manager ───────────────────────────────────────
@@ -488,6 +489,10 @@ class GoldAnalystSSE {
         el.textContent = '$' + data.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         el.className   = 'live-price ' + (data.price > prev ? 'up' : data.price < prev ? 'down' : '');
         setTimeout(() => { if (el) el.className = 'live-price'; }, 600);
+        // Forward to chart
+        if (window.aurumChart) {
+            window.aurumChart.onTick(data.price, data.timestamp || Math.floor(Date.now() / 1000));
+        }
     }
     
     onStrategyUpdate(data) {
@@ -756,6 +761,18 @@ class GoldAnalystSSE {
             _setEl('m15-ob', `$${ob.low.toFixed(2)}–$${ob.high.toFixed(2)}`);
         }
         _setEl('ticker-dir', data.direction || '—');
+        // Refresh chart overlays when indicators update
+        if (window.aurumChart && window.aurumChart._ready) {
+            window.aurumChart.refreshOverlays({
+                fvgs_h1:  data.fvgs_h1  || [],
+                fvgs_m15: data.fvgs_m15 || [],
+                obs_h1:   data.obs_h1   || [],
+                obs_m15:  data.obs_m15  || [],
+                swing_highs_h1: data.swing_highs_h1 || [],
+                swing_lows_h1:  data.swing_lows_h1  || [],
+                liquidity_pools: data.liquidity_pools || [],
+            });
+        }
     }
     
     renderRegime(data) {

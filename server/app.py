@@ -159,38 +159,61 @@ def create_app(event_bus: EventBus) -> Flask:
 
     @app.route("/api/candles/<tf>")
     def get_candles(tf):
-        """Get historical candles and overlays for the chart."""
+        """Get candles from CSV + live overlays from indicator state."""
+        tf_map = {"M5": "5min", "M15": "15min", "H1": "1h", "H4": "4h"}
+        tf_upper = tf.upper()
+        interval = tf_map.get(tf_upper)
+        if not interval:
+            return jsonify({"candles": [], "overlays": {}})
+
+        csv_path = config.BACKTEST_DATA_DIR / f"{config.SYMBOL}_{interval}.csv"
+        candles = []
+        try:
+            df = pd.read_csv(csv_path)
+            df.columns = [c.lower().strip() for c in df.columns]
+            df = df.tail(300).reset_index(drop=True)
+            for _, row in df.iterrows():
+                ts = None
+                if "timestamp" in df.columns:
+                    ts = int(float(row["timestamp"]))
+                elif "datetime" in df.columns:
+                    ts = int(pd.Timestamp(row["datetime"]).timestamp())
+                if ts:
+                    candles.append({
+                        "time":  ts,
+                        "open":  round(float(row["open"]),  2),
+                        "high":  round(float(row["high"]),  2),
+                        "low":   round(float(row["low"]),   2),
+                        "close": round(float(row["close"]), 2),
+                    })
+        except Exception as e:
+            logger.warning(f"Chart candle read failed for {tf}: {e}")
+
         latest = sse_manager._latest_state
-        candle_data = latest.get("candle_data", {}).get(tf.upper(), [])
-        
-        # In a real scenario, this would also include computed overlays for that TF
-        # For now, we return candles and mock overlays based on current indicator state
-        indicator_state = latest.get("indicator_update", {})
-        dr_state = latest.get("dealing_range_update", {})
+        ind = latest.get("indicators", {})
+        dr  = latest.get("dealing_range_update", {})
 
-        # Filter indicators by timeframe if applicable
-        # (This is a simplification; ideally indicators are stored per timeframe in the event bus)
-        
-        def _ensure_dict(obj):
-            return vars(obj) if hasattr(obj, '__dict__') else obj
+        def _safe(lst):
+            return [x if isinstance(x, dict) else (vars(x) if hasattr(x, '__dict__') else {}) for x in (lst or [])]
 
-        return jsonify({
-            "candles": candle_data,
-            "overlays": {
-                "fvgs": [_ensure_dict(f) for f in indicator_state.get("fvgs_h1", [])] if tf == "H1" else [],
-                "obs": [_ensure_dict(o) for o in indicator_state.get("obs_m15", [])] if tf == "M15" else [],
-                "swings": [_ensure_dict(s) for s in (indicator_state.get("swing_highs_h1", []) + indicator_state.get("swing_lows_h1", []))] if tf == "H1" else [],
-                "ote": {
-                    "high": dr_state.get("ote_high", 0),
-                    "low": dr_state.get("ote_low", 0),
-                    "eq": dr_state.get("equilibrium", 0)
-                } if tf == "H4" and dr_state.get("is_valid") else None,
-                "dealing_range": {
-                    "high": dr_state.get("range_high", 0),
-                    "low": dr_state.get("range_low", 0)
-                } if tf == "H4" else None
-            }
-        })
+        overlays = {
+            "fvgs_h1":  _safe(ind.get("fvgs_h1", [])),
+            "fvgs_m15": _safe(ind.get("fvgs_m15", [])),
+            "obs_h1":   _safe(ind.get("obs_h1", [])),
+            "obs_m15":  _safe(ind.get("obs_m15", [])),
+            "swing_highs_h1": _safe(ind.get("swing_highs_h1", [])),
+            "swing_lows_h1":  _safe(ind.get("swing_lows_h1", [])),
+            "liquidity_pools": _safe(ind.get("liquidity_pools", [])),
+            "dealing_range": {
+                "high":     dr.get("range_high"),
+                "low":      dr.get("range_low"),
+                "eq":       dr.get("equilibrium"),
+                "ote_high": dr.get("ote_high"),
+                "ote_low":  dr.get("ote_low"),
+            } if dr.get("is_valid") else None,
+        }
+
+        return jsonify({"candles": candles, "overlays": overlays})
 
     @app.route("/api/psychology", methods=["POST"])
     def submit_psychology():

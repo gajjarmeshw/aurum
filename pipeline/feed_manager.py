@@ -72,17 +72,104 @@ class FeedManager:
             self.event_bus.publish("tick", tick)
 
     def _on_candle_close(self, timeframe: str, candle):
-        """Callback when a candle closes — publish to event bus."""
-        # Align topic with frontend expected 'candle' (not candle_close)
+        """Callback when a candle closes — verify OHLC via REST then publish."""
+        self._verify_closed_candle(timeframe, candle)
+
         self.event_bus.publish("candle", {
             "timeframe": timeframe,
             "candle": candle.to_dict(),
         })
         logger.info(f"Candle closed: {timeframe} O={candle.open:.2f} H={candle.high:.2f} L={candle.low:.2f} C={candle.close:.2f}")
-        
+
         # Compute and publish indicators and confluence ONLY on M5 close
         if timeframe == "M5":
             self._publish_live_indicators()
+
+    def _verify_closed_candle(self, timeframe: str, candle):
+        """
+        Replace the self-built closed candle with the official TwelveData REST bar.
+        Called immediately after each candle close — uses ~414 credits/day total,
+        well within the free tier (800/day).
+
+        If the API call fails (throttle, network), keep the self-built candle — it's
+        a fallback, not a hard requirement.
+        """
+        import requests
+        from datetime import datetime, timezone as dt_timezone
+
+        tf_map = {"M5": "5min", "M15": "15min", "H1": "1h", "H4": "4h"}
+        interval = tf_map.get(timeframe)
+        if not interval:
+            return
+
+        try:
+            # Fetch the 2 most recent closed bars — index [1] is the just-closed one
+            params = {
+                "symbol":     config.TWELVE_DATA_SYMBOL,
+                "interval":   interval,
+                "outputsize": 2,
+                "apikey":     config.TWELVE_DATA_API_KEY,
+                "order":      "DESC",
+            }
+            resp = requests.get(
+                "https://api.twelvedata.com/time_series",
+                params=params, timeout=5
+            )
+            data = resp.json()
+            values = data.get("values", [])
+            if len(values) < 2:
+                return
+
+            # values[0] = current open bar, values[1] = just-closed bar
+            bar = values[1]
+            api_open  = float(bar["open"])
+            api_high  = float(bar["high"])
+            api_low   = float(bar["low"])
+            api_close = float(bar["close"])
+
+            # Patch the candle in-place
+            old = (candle.open, candle.high, candle.low, candle.close)
+            candle.open  = api_open
+            candle.high  = api_high
+            candle.low   = api_low
+            candle.close = api_close
+
+            if (candle.open, candle.high, candle.low, candle.close) != old:
+                logger.debug(
+                    f"[Verify] {timeframe} candle corrected: "
+                    f"O {old[0]:.2f}→{api_open:.2f} "
+                    f"H {old[1]:.2f}→{api_high:.2f} "
+                    f"L {old[2]:.2f}→{api_low:.2f} "
+                    f"C {old[3]:.2f}→{api_close:.2f}"
+                )
+
+            # Also append to CSV so the file stays current
+            self._append_candle_to_csv(timeframe, interval, bar)
+
+        except Exception as e:
+            logger.debug(f"[Verify] {timeframe} REST check skipped: {e}")
+
+    def _append_candle_to_csv(self, timeframe: str, interval: str, bar: dict):
+        """Append a verified closed bar to the CSV — keeps file current without full re-fetch."""
+        import pandas as pd
+        csv_path = config.BACKTEST_DATA_DIR / f"{config.SYMBOL}_{interval}.csv"
+        try:
+            new_row = pd.DataFrame([{
+                "datetime": bar["datetime"],
+                "open":     float(bar["open"]),
+                "high":     float(bar["high"]),
+                "low":      float(bar["low"]),
+                "close":    float(bar["close"]),
+                "volume":   bar.get("volume", 0),
+            }])
+            if csv_path.exists():
+                df = pd.read_csv(csv_path)
+                df = pd.concat([df, new_row]).drop_duplicates(subset=["datetime"]).sort_values("datetime")
+            else:
+                df = new_row
+            df.to_csv(csv_path, index=False)
+        except Exception as e:
+            logger.debug(f"[CSV] Failed to append {timeframe} bar: {e}")
 
     def _publish_live_indicators(self, force: bool = False):
         """Compute all indicators and confluence for live dashboard."""
@@ -321,42 +408,85 @@ class FeedManager:
             self._check_session_handoff()
 
     def _ensure_historical_data(self):
-        """Fetch historical data from Twelve Data if CSVs are missing or small."""
-        logger.info("Checking historical data requirements...")
-        tf_map = {
-            "M5": "5min",
-            "M15": "15min",
-            "H1": "1h",
-            "H4": "4h"
-        }
-        
-        for tf, interval in tf_map.items():
-            csv_path = config.BACKTEST_DATA_DIR / f"{config.SYMBOL}_{interval}.csv"
-            needs_fetch = False
-            
-            if not csv_path.exists():
-                logger.info(f"Historical data for {tf} missing. Fetching...")
-                needs_fetch = True
-            else:
-                # Check if it has enough bars (at least 5 days)
-                import pandas as pd
-                try:
-                    df = pd.read_csv(csv_path)
-                    if len(df) < config.CANDLE_HISTORY_SIZE * 0.8: # 80% threshold
-                        logger.info(f"Historical data for {tf} is too small ({len(df)} bars). Fetching...")
-                        needs_fetch = True
-                except Exception:
-                    needs_fetch = True
+        """
+        On every startup — fills ALL missing bars since last run, no matter how long
+        the server was down (overnight, weekend, multi-day outage).
 
-            if needs_fetch:
-                fetch_historical_data(config.TWELVE_DATA_SYMBOL, interval, outputsize=config.CANDLE_HISTORY_SIZE)
-        
-        # After ensuring CSVs exist, tell candle builder to re-seed if it was already initialized
-        # (Though on startup, CandleBuilder is initialized right before this in __init__)
-        # To be safe, we re-trigger seeding if history is still small.
+        Strategy per TF:
+          1. CSV missing or too small → full backfill (5000 bars)
+          2. CSV exists → read last datetime, calculate exact bars missed since then,
+             fetch that many bars via start_date so no gap and no over-fetching
+          3. Re-seed candle builder from updated CSVs (accurate closed OHLC from API,
+             not self-built tick aggregations)
+
+        Weekend handling: Twelve Data returns only trading sessions — no phantom
+        weekend bars. The staleness check in _seed_from_csv already skips flat
+        weekend candles, so no extra handling needed here.
+        """
+        import pandas as pd
+        from datetime import datetime, timezone as dt_timezone, timedelta
+
+        logger.info("Startup: gap-filling historical data from TwelveData REST API...")
+
+        tf_map = {
+            "M5":  ("5min",  5),    # bar_minutes
+            "M15": ("15min", 15),
+            "H1":  ("1h",    60),
+            "H4":  ("4h",    240),
+        }
+
+        for tf, (interval, bar_min) in tf_map.items():
+            csv_path = config.BACKTEST_DATA_DIR / f"{config.SYMBOL}_{interval}.csv"
+
+            # ── Full backfill if CSV missing or too small ──────────
+            needs_full = False
+            last_dt    = None
+
+            if not csv_path.exists():
+                logger.info(f"{tf}: CSV missing — full backfill")
+                needs_full = True
+            else:
+                try:
+                    existing = pd.read_csv(csv_path)
+                    if len(existing) < config.CANDLE_HISTORY_SIZE * 0.8:
+                        logger.info(f"{tf}: CSV too small ({len(existing)} bars) — full backfill")
+                        needs_full = True
+                    else:
+                        last_dt = pd.to_datetime(existing["datetime"].iloc[-1])
+                except Exception:
+                    needs_full = True
+
+            if needs_full:
+                fetch_historical_data(config.TWELVE_DATA_SYMBOL, interval,
+                                      outputsize=config.CANDLE_HISTORY_SIZE)
+                continue
+
+            # ── Incremental gap-fill — fetch exactly what's missing ─
+            now_utc   = datetime.now(dt_timezone.utc)
+            gap_secs  = (now_utc - last_dt.replace(tzinfo=dt_timezone.utc)).total_seconds()
+            bars_missed = int(gap_secs / (bar_min * 60)) + 5  # +5 buffer for partial bar
+
+            if bars_missed <= 1:
+                logger.info(f"{tf}: up to date (last bar {last_dt})")
+                continue
+
+            # Cap at 5000 (API limit) — if more than that, do a full refresh
+            if bars_missed > 5000:
+                logger.info(f"{tf}: gap too large ({bars_missed} bars) — full backfill")
+                fetch_historical_data(config.TWELVE_DATA_SYMBOL, interval,
+                                      outputsize=config.CANDLE_HISTORY_SIZE)
+            else:
+                start_str = last_dt.strftime("%Y-%m-%d %H:%M:%S")
+                logger.info(f"{tf}: gap-fill {bars_missed} bars from {start_str}")
+                fetch_historical_data(config.TWELVE_DATA_SYMBOL, interval,
+                                      outputsize=bars_missed, start_date=start_str)
+
+        # ── Re-seed candle builder with accurate closed candles ────
+        logger.info("Re-seeding candle builder from updated CSVs...")
         for tf in config.TIMEFRAMES:
-            if len(self.candle_builder._history[tf]) < config.CANDLE_HISTORY_SIZE * 0.5:
-                self.candle_builder._seed_from_csv(tf)
+            self.candle_builder._history[tf].clear()
+            self.candle_builder._seed_from_csv(tf)
+        logger.info("Candle builder re-seeded — all gaps filled")
 
     async def run(self):
         """Start all feeds and health monitoring."""

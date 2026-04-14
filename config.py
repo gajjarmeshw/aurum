@@ -167,7 +167,7 @@ ATR_PERIOD = 14
 SWING_LOOKBACK = 5             # 5-bar pivot detection
 FVG_PROXIMITY_PTS = 5.0        # pts — price within this distance counts as "approaching" FVG
 CANDLE_HISTORY_SIZE = 5000      # candles per timeframe in memory (Twelve Data Free Tier max)
-CANDLE_PERSIST_INTERVAL = 900  # seconds (15 min)
+CANDLE_PERSIST_INTERVAL = 120  # seconds (2 min)
 
 # ─── Timeframes ─────────────────────────────────────────────
 TIMEFRAMES = {
