@@ -439,8 +439,9 @@ class GoldAnalystSSE {
         this.es.addEventListener('strategy_update',   e => this.onStrategyUpdate(JSON.parse(e.data)));
         this.es.addEventListener('health',            e => this.onHealth(JSON.parse(e.data)));
         this.es.addEventListener('full_state',        e => this.onFullState(JSON.parse(e.data)));
-        this.es.addEventListener('indicators',        e => this.onIndicators(JSON.parse(e.data)));
-        this.es.addEventListener('market_regime',     e => this.renderRegime(JSON.parse(e.data)));
+        this.es.addEventListener('indicators',           e => this.onIndicators(JSON.parse(e.data)));
+        this.es.addEventListener('market_regime',        e => this.renderRegime(JSON.parse(e.data)));
+        this.es.addEventListener('dealing_range_update', e => this.onDealingRange(JSON.parse(e.data)));
 
         this.es.onopen  = () => {
             this.setStatus(true);
@@ -761,18 +762,41 @@ class GoldAnalystSSE {
             _setEl('m15-ob', `$${ob.low.toFixed(2)}–$${ob.high.toFixed(2)}`);
         }
         _setEl('ticker-dir', data.direction || '—');
-        // Refresh chart overlays when indicators update
-        if (window.aurumChart && window.aurumChart._ready) {
-            window.aurumChart.refreshOverlays({
-                fvgs_h1:  data.fvgs_h1  || [],
-                fvgs_m15: data.fvgs_m15 || [],
-                obs_h1:   data.obs_h1   || [],
-                obs_m15:  data.obs_m15  || [],
-                swing_highs_h1: data.swing_highs_h1 || [],
-                swing_lows_h1:  data.swing_lows_h1  || [],
-                liquidity_pools: data.liquidity_pools || [],
-            });
-        }
+        // Cache indicator data for chart overlay merging
+        window._lastIndicatorData = data;
+        this._refreshChartOverlays();
+    }
+
+    onDealingRange(data) {
+        if (!data) return;
+        window._lastDRData = data;
+        // Also update DR display (already handled by confluence but as fallback)
+        this._refreshChartOverlays();
+    }
+
+    _refreshChartOverlays() {
+        if (!window.aurumChart || !window.aurumChart._ready) return;
+        const ind = window._lastIndicatorData || {};
+        const dr  = window._lastDRData || {};
+        window.aurumChart.refreshOverlays({
+            fvgs_h1:  ind.fvgs_h1  || [],
+            fvgs_m15: ind.fvgs_m15 || [],
+            fvgs_m5:  ind.fvgs_m5  || [],
+            obs_h4:   ind.obs_h4   || [],
+            obs_h1:   ind.obs_h1   || [],
+            obs_m15:  ind.obs_m15  || [],
+            obs_m5:   ind.obs_m5   || [],
+            swing_highs_h1:  ind.swing_highs_h1  || [],
+            swing_lows_h1:   ind.swing_lows_h1   || [],
+            liquidity_pools: ind.liquidity_pools  || [],
+            dealing_range: dr.is_valid ? {
+                high:     dr.range_high,
+                low:      dr.range_low,
+                eq:       dr.equilibrium,
+                ote_high: dr.ote_high,
+                ote_low:  dr.ote_low,
+            } : null,
+        });
     }
     
     renderRegime(data) {
@@ -863,6 +887,14 @@ class GoldAnalystSSE {
 
         if (data.strategy_history) {
             this.onStrategyHistory(data.strategy_history);
+        }
+
+        if (data.dealing_range_update) {
+            this.onDealingRange(data.dealing_range_update);
+        }
+
+        if (data.indicators) {
+            this.onIndicators(data.indicators);
         }
     }
 }

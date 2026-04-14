@@ -49,25 +49,23 @@ class HealthMonitor:
     """Monitors health of both feeds and publishes status."""
 
     def __init__(self, on_status_update=None):
-        self.primary = FeedHealth(name="twelve_data", active=True)
-        self.fallback = FeedHealth(name="finnhub", active=False)
+        self.primary = FeedHealth(name="oanda", active=True)
+        self.fallback = FeedHealth(name="oanda", active=False)
         self.on_status_update = on_status_update
         self._failover_count = 0
-        self._current_source = "twelve_data"
+        self._current_source = "oanda"
 
-    def record_tick(self, source: str):
-        """Record a tick received from a feed."""
-        feed = self.primary if source == "twelve_data" else self.fallback
-        feed.last_tick_time = time.time()
-        feed.total_ticks += 1
+    def record_tick(self, source: str = "oanda"):  # noqa: ARG002
+        """Record a tick received from the feed."""
+        self.primary.last_tick_time = time.time()
+        self.primary.total_ticks += 1
 
-    def update_connection(self, source: str, connected: bool):
-        """Update connection status for a feed."""
-        feed = self.primary if source == "twelve_data" else self.fallback
-        was_connected = feed.connected
-        feed.connected = connected
+    def update_connection(self, connected: bool):
+        """Update connection status."""
+        was_connected = self.primary.connected
+        self.primary.connected = connected
         if not was_connected and connected:
-            feed.reconnect_count += 1
+            self.primary.reconnect_count += 1
 
     def record_failover(self, to_source: str):
         """Record a failover event."""

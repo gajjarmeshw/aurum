@@ -15,6 +15,8 @@ FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+OANDA_API_TOKEN  = os.getenv("OANDA_API_TOKEN", "")
+OANDA_ACCOUNT_ID = os.getenv("OANDA_ACCOUNT_ID", "")
 FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
 
 # ─── SSL Settings ───────────────────────────────────────────

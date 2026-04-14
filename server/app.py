@@ -159,35 +159,13 @@ def create_app(event_bus: EventBus) -> Flask:
 
     @app.route("/api/candles/<tf>")
     def get_candles(tf):
-        """Get candles from CSV + live overlays from indicator state."""
-        tf_map = {"M5": "5min", "M15": "15min", "H1": "1h", "H4": "4h"}
+        """Serve candles from EventBus cache (populated by OANDA feed)."""
         tf_upper = tf.upper()
-        interval = tf_map.get(tf_upper)
-        if not interval:
+        if tf_upper not in ("M5", "M15", "H1", "H4"):
             return jsonify({"candles": [], "overlays": {}})
 
-        csv_path = config.BACKTEST_DATA_DIR / f"{config.SYMBOL}_{interval}.csv"
-        candles = []
-        try:
-            df = pd.read_csv(csv_path)
-            df.columns = [c.lower().strip() for c in df.columns]
-            df = df.tail(300).reset_index(drop=True)
-            for _, row in df.iterrows():
-                ts = None
-                if "timestamp" in df.columns:
-                    ts = int(float(row["timestamp"]))
-                elif "datetime" in df.columns:
-                    ts = int(pd.Timestamp(row["datetime"]).timestamp())
-                if ts:
-                    candles.append({
-                        "time":  ts,
-                        "open":  round(float(row["open"]),  2),
-                        "high":  round(float(row["high"]),  2),
-                        "low":   round(float(row["low"]),   2),
-                        "close": round(float(row["close"]), 2),
-                    })
-        except Exception as e:
-            logger.warning(f"Chart candle read failed for {tf}: {e}")
+        latest  = sse_manager._latest_state
+        candles = latest.get(f"candles_{tf_upper}", [])
 
         latest = sse_manager._latest_state
         ind = latest.get("indicators", {})

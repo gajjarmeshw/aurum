@@ -100,8 +100,11 @@ class AurumChart {
             // Draw ICT overlays
             this._drawOverlays(data.overlays || {});
 
-            // Fit to last 80 bars
+            // Fit visible range to last 100 bars
             this.chart.timeScale().scrollToPosition(0, false);
+
+            // Apply cached overlays immediately after load
+            if (window.analyst) window.analyst._refreshChartOverlays();
 
             if (chip) chip.style.display = 'none';
         } catch (e) {
@@ -143,54 +146,54 @@ class AurumChart {
     _drawOverlays(ov) {
         const tf = this.tf;
 
-        // Dealing Range — dashed lines
+        // ── Dealing Range ──────────────────────────────
         if (ov.dealing_range) {
             const dr = ov.dealing_range;
-            if (dr.high) this._priceLine(dr.high, '#7c3aed', '──── RANGE HIGH', 'dashed');
-            if (dr.low)  this._priceLine(dr.low,  '#7c3aed', '──── RANGE LOW',  'dashed');
-            if (dr.eq)   this._priceLine(dr.eq,   'rgba(124,58,237,0.5)', 'EQ', 'dotted');
-            if (dr.ote_high && dr.ote_low) {
-                this._band(dr.ote_high, dr.ote_low, 'rgba(245,158,11,0.06)', 'rgba(245,158,11,0.4)', 'OTE');
-            }
+            if (dr.high) this._priceLine(dr.high, '#7c3aed', 'R.HIGH', 'dashed');
+            if (dr.low)  this._priceLine(dr.low,  '#7c3aed', 'R.LOW',  'dashed');
+            if (dr.eq)   this._priceLine(dr.eq,   'rgba(124,58,237,0.4)', 'EQ', 'dotted');
+            if (dr.ote_high) this._priceLine(dr.ote_high, 'rgba(245,158,11,0.6)', 'OTE.H', 'dashed');
+            if (dr.ote_low)  this._priceLine(dr.ote_low,  'rgba(245,158,11,0.6)', 'OTE.L', 'dashed');
         }
 
-        // Liquidity pools (BSL / SSL)
+        // ── Liquidity Pools (BSL/SSL) — only unswept ──
         for (const pool of (ov.liquidity_pools || [])) {
-            if (!pool.price) continue;
-            const isBSL   = pool.type === 'BSL';
-            const swept   = pool.swept;
-            const color   = swept ? 'rgba(107,114,128,0.5)' : (isBSL ? '#00ffa3' : '#ff2d6b');
-            const label   = `${pool.type}${swept ? ' ✓' : ''}`;
-            this._priceLine(pool.price, color, label, 'dashed');
+            if (!pool.price || pool.swept) continue;
+            const color = pool.type === 'BSL' ? '#00ffa3' : '#ff2d6b';
+            this._priceLine(pool.price, color, pool.type, 'dashed');
         }
 
-        // FVGs
-        const fvgs = tf === 'H1' ? ov.fvgs_h1 : (tf === 'M15' || tf === 'M5' ? ov.fvgs_m15 : []);
-        for (const fvg of (fvgs || [])) {
-            if (!fvg.high || !fvg.low || fvg.filled) continue;
-            const bull   = fvg.direction === 'bullish';
-            const bg     = bull ? 'rgba(0,255,163,0.06)' : 'rgba(255,45,107,0.06)';
-            const border = bull ? 'rgba(0,255,163,0.35)' : 'rgba(255,45,107,0.35)';
-            this._band(fvg.high, fvg.low, bg, border, bull ? 'FVG ▲' : 'FVG ▼');
+        // ── FVGs — pick correct TF list, only unfilled, last 5 ──
+        const fvgList = tf === 'H4' ? [] :
+                        tf === 'H1' ? (ov.fvgs_h1 || []) :
+                        tf === 'M15' ? (ov.fvgs_m15 || []) :
+                        (ov.fvgs_m5 || ov.fvgs_m15 || []);
+
+        for (const fvg of fvgList.filter(f => !f.filled).slice(-5)) {
+            const bull  = fvg.direction === 'bullish';
+            const color = bull ? 'rgba(0,255,163,0.7)' : 'rgba(255,45,107,0.7)';
+            this._band(fvg.high, fvg.low, null, color, bull ? 'FVG▲' : 'FVG▼');
         }
 
-        // OBs
-        const obs = tf === 'H1' ? ov.obs_h1 : ov.obs_m15;
-        for (const ob of (obs || [])) {
-            if (!ob.high || !ob.low || ob.mitigated) continue;
-            const bull   = ob.direction === 'bullish';
-            const bg     = bull ? 'rgba(0,255,163,0.04)' : 'rgba(255,45,107,0.04)';
-            const border = bull ? 'rgba(0,255,163,0.5)' : 'rgba(255,45,107,0.5)';
-            this._band(ob.high, ob.low, bg, border, bull ? 'OB ▲' : 'OB ▼');
+        // ── OBs — pick correct TF list, only unmitigated, last 3 ──
+        const obList = tf === 'H4' ? (ov.obs_h4 || []) :
+                       tf === 'H1' ? (ov.obs_h1 || []) :
+                       tf === 'M15' ? (ov.obs_m15 || []) :
+                       (ov.obs_m5 || ov.obs_m15 || []);
+
+        for (const ob of obList.filter(o => !o.mitigated).slice(-3)) {
+            const bull  = ob.direction === 'bullish';
+            const color = bull ? 'rgba(0,255,163,0.9)' : 'rgba(255,45,107,0.9)';
+            this._band(ob.high, ob.low, null, color, bull ? 'OB▲' : 'OB▼');
         }
 
-        // H1 Swing Highs / Lows
+        // ── Swing points — only last 3 highs + 3 lows ──
         if (tf === 'H1' || tf === 'H4') {
-            for (const s of (ov.swing_highs_h1 || [])) {
-                if (s.price) this._priceLine(s.price, 'rgba(34,211,238,0.4)', 'SH', 'dotted');
+            for (const s of (ov.swing_highs_h1 || []).slice(-3)) {
+                if (s.price) this._priceLine(s.price, 'rgba(34,211,238,0.35)', 'SH', 'dotted');
             }
-            for (const s of (ov.swing_lows_h1 || [])) {
-                if (s.price) this._priceLine(s.price, 'rgba(245,158,11,0.4)', 'SL', 'dotted');
+            for (const s of (ov.swing_lows_h1 || []).slice(-3)) {
+                if (s.price) this._priceLine(s.price, 'rgba(245,158,11,0.35)', 'SL', 'dotted');
             }
         }
     }
@@ -213,48 +216,10 @@ class AurumChart {
         this._overlayRefs.push({ type: 'priceLine', ref: line });
     }
 
-    // Simulate a band with two price lines + a filled area series
-    _band(high, low, bg, borderColor, label) {
-        // Top line
+    // Draw a band as two solid price lines (top + bottom) — no fill area
+    _band(high, low, _bg, borderColor, label) {
         this._priceLine(high, borderColor, label, 'solid');
-        // Bottom line
         this._priceLine(low,  borderColor, '',     'solid');
-
-        // Fill band using area series
-        const area = this.chart.addAreaSeries({
-            topColor:        bg,
-            bottomColor:     bg,
-            lineColor:       'transparent',
-            lineWidth:       0,
-            priceLineVisible: false,
-            lastValueVisible: false,
-            crosshairMarkerVisible: false,
-        });
-        // Area series needs time data — inject as two points spanning the chart
-        const now   = Math.floor(Date.now() / 1000);
-        const start = now - 200 * 300; // 200 bars back
-        area.setData([
-            { time: start, value: high },
-            { time: now,   value: high },
-        ]);
-        // Overlay the low band
-        const area2 = this.chart.addAreaSeries({
-            topColor:        'transparent',
-            bottomColor:     bg,
-            lineColor:       'transparent',
-            lineWidth:       0,
-            priceLineVisible: false,
-            lastValueVisible: false,
-            crosshairMarkerVisible: false,
-            baseValue:       { type: 'price', price: low },
-        });
-        area2.setData([
-            { time: start, value: low },
-            { time: now,   value: low },
-        ]);
-
-        this._overlayRefs.push({ type: 'series', ref: area });
-        this._overlayRefs.push({ type: 'series', ref: area2 });
     }
 
     _clearOverlays() {

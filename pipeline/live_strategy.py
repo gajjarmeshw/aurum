@@ -64,11 +64,13 @@ class LiveStrategyRunner:
         df = pd.DataFrame(bars)
         # CandleBuilder stores 'time' as unix seconds or datetime — normalize to 'datetime'
         if "datetime" not in df.columns:
-            if "time" in df.columns:
-                df["datetime"] = pd.to_datetime(df["time"], unit="s", errors="coerce")
+            # Support both unix timestamp keys (OANDA: "timestamp", legacy: "time")
+            ts_col = "timestamp" if "timestamp" in df.columns else ("time" if "time" in df.columns else None)
+            if ts_col:
+                df["datetime"] = pd.to_datetime(df[ts_col], unit="s", errors="coerce")
                 mask = df["datetime"].isna()
                 if mask.any():
-                    df.loc[mask, "datetime"] = pd.to_datetime(df.loc[mask, "time"])
+                    df.loc[mask, "datetime"] = pd.to_datetime(df.loc[mask, ts_col])
             else:
                 return pd.DataFrame()
         df["datetime"] = pd.to_datetime(df["datetime"])
