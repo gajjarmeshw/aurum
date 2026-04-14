@@ -701,8 +701,10 @@ class GoldAnalystSSE {
         }
 
         log.innerHTML = history.map(h => {
-            const score = h.confluence.total || 0;
-            const isGlow = score >= 8;
+            const swing = h.confluence && h.confluence.swing;
+            const score = swing ? (swing.score || 0) : (h.confluence && h.confluence.total || 0);
+            const maxScore = swing ? (swing.max_score || 6.5) : 6.5;
+            const isGlow = swing ? swing.is_valid : score >= 8;
             return `
                 <div class="history-item">
                     <div class="hist-main">
@@ -710,7 +712,7 @@ class GoldAnalystSSE {
                         <div class="hist-setup">${h.setup_status || 'Scanning...'}</div>
                     </div>
                     <div class="hist-pnl" style="color:${isGlow ? 'var(--bull)' : 'var(--t2)'}">
-                        ${score.toFixed(1)}/12
+                        ${score.toFixed(1)}/${maxScore}
                     </div>
                 </div>
             `;

@@ -253,9 +253,11 @@ class FeedManager:
             if self._handoff_sent_today:
                 logger.info("Midnight IST: Resetting daily session flags.")
                 self._handoff_sent_today = False
-                # Trigger daily email summary here
-                from alerts.email_summary import send_daily_summary
-                send_daily_summary()
+                try:
+                    from alerts.email_summary import send_daily_summary
+                    send_daily_summary()
+                except Exception as e:
+                    logger.error(f"Daily email summary failed: {e}")
 
     async def _health_check_loop(self):
         """

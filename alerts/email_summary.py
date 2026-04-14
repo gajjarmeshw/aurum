@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 def send_daily_summary():
     """Build and send the daily performance summary email."""
-    if not config.EMAIL_ENABLED:
+    if not getattr(config, 'EMAIL_ENABLED', False):
         logger.info("Email summary disabled (no credentials in .env)")
         return
 
