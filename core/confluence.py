@@ -31,20 +31,31 @@ def compute_confluence(indicators: IndicatorResult, ict_result: dict,
     MAX_SWEEP_AGE = 5 * 3600 
     
     swept = False
-    recent_sweep_type = None
+    sweep_detail = "No recent sweep"
     if indicators.liquidity_pools:
-        # Get newest first implicitly assuming list is ordered, or search for most recent
         for p in indicators.liquidity_pools:
             if p.swept and (last_ts - p.sweep_timestamp) <= MAX_SWEEP_AGE:
                 swept = True
-                recent_sweep_type = p.type
+                sweep_detail = f"Recent {p.type} sweep"
                 break
+
+    # BOS-as-sweep: if H1 BOS is confirmed with no unswept BSL above price,
+    # the BOS itself proves BSL was already taken (ICT: BOS happens because price swept prior highs)
+    if not swept and indicators.bos_h1:
+        bos_direction = indicators.bos_h1[-1].direction
+        no_bsl_above  = not any(p.type == "BSL" and not p.swept for p in indicators.liquidity_pools)
+        if bos_direction == "bullish" and no_bsl_above:
+            swept = True
+            sweep_detail = f"BOS implies BSL swept (H1 BOS @ ${indicators.bos_h1[-1].price:.2f})"
+        elif bos_direction == "bearish" and not any(p.type == "SSL" and not p.swept for p in indicators.liquidity_pools):
+            swept = True
+            sweep_detail = f"BOS implies SSL swept (H1 BOS @ ${indicators.bos_h1[-1].price:.2f})"
 
     factors["liquidity_sweep"] = {
         "weight": w.get("liquidity_sweep", 2.0),
         "score": w.get("liquidity_sweep", 2.0) if swept else 0.0,
         "status": "✅" if swept else "❌",
-        "detail": "Recent sweep" if swept else "No recent sweep",
+        "detail": sweep_detail,
     }
 
     # 2. H1 BOS confirmed
