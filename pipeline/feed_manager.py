@@ -71,6 +71,8 @@ class FeedManager:
             f"O={candle['open']:.2f} H={candle['high']:.2f} "
             f"L={candle['low']:.2f}  C={candle['close']:.2f}"
         )
+        if timeframe == "M1":
+            self._on_m1_close()
         if timeframe == "M5":
             self._publish_live_indicators()
 
@@ -177,8 +179,10 @@ class FeedManager:
             # 6. Live Strategy
             try:
                 m5_bars = self.feed.get_all_candles("M5")
+                m1_bars = self.feed.get_all_candles("M1")
                 self.live_strategy.on_m5_close(
-                    m5_bars, confluence, ict_dict, self.event_bus, indicators
+                    m5_bars, confluence, ict_dict, self.event_bus, indicators,
+                    m1_bars=m1_bars,
                 )
             except Exception as e:
                 logger.error(f"Live strategy error: {e}", exc_info=True)
@@ -191,6 +195,14 @@ class FeedManager:
 
         except Exception as e:
             logger.error(f"Failed live indicator computation: {e}", exc_info=True)
+
+    def _on_m1_close(self):
+        """Forward M1 close to live strategy for DOR FVG detection."""
+        try:
+            m1_bars = self.feed.get_all_candles("M1")
+            self.live_strategy.on_m1_close(m1_bars, self.event_bus)
+        except Exception as e:
+            logger.error(f"Live strategy M1 error: {e}", exc_info=True)
 
     def _log_strategy_status(self, confluence: dict, ict: dict, dr: dict):
         """Log a structured strategy table to terminal."""

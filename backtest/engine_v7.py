@@ -128,13 +128,79 @@ def _daily_opens(m5: pd.DataFrame) -> dict[str, float]:
     return opens
 
 
-def _scan_dor(m5: pd.DataFrame) -> list[dict]:
+def _load_m1(data_dir) -> pd.DataFrame | None:
+    """Load M1 CSV if available; return None if missing."""
+    path = str(data_dir / "XAUUSD_1min.csv")
+    try:
+        m1 = _load_csv(path)
+        if m1.empty:
+            return None
+        m1["ist"] = m1["datetime"].dt.tz_convert(IST)
+        m1["date_ist"] = m1["ist"].dt.strftime("%Y-%m-%d")
+        m1["minute_ist"] = m1["ist"].dt.hour * 60 + m1["ist"].dt.minute
+        return m1
+    except Exception:
+        return None
+
+
+def _fvg_entry(m1: pd.DataFrame, t0: pd.Timestamp, is_short: bool,
+               do: float) -> dict | None:
+    """
+    Look for a M1 Fair Value Gap within 10 min after t0 in the signal direction.
+    Returns a setup dict with tighter SL if found, else None.
+    """
+    t1 = t0 + pd.Timedelta(minutes=10)
+    window = m1[(m1["datetime"] > t0) & (m1["datetime"] <= t1)].reset_index(drop=True)
+    if len(window) < 3:
+        return None
+    for j in range(1, len(window) - 1):
+        pb = window.iloc[j - 1]
+        nb = window.iloc[j + 1]
+        if is_short:
+            if float(pb["low"]) <= float(nb["high"]):
+                continue
+            fvg_hi = float(pb["low"])
+            entry  = float(nb["close"])
+            if entry > fvg_hi:
+                continue
+            sl      = fvg_hi + 1.5
+            sl_dist = sl - entry
+            if sl_dist < 4.0 or sl_dist > 20.0:
+                continue
+            tp = do + 5.0
+            if tp >= entry:
+                continue
+            return {"entry_time": nb["datetime"], "direction": "short",
+                    "entry": entry, "sl": sl, "tp": tp}
+        else:
+            if float(pb["high"]) >= float(nb["low"]):
+                continue
+            fvg_lo = float(pb["high"])
+            entry  = float(nb["close"])
+            if entry < fvg_lo:
+                continue
+            sl      = fvg_lo - 1.5
+            sl_dist = entry - sl
+            if sl_dist < 4.0 or sl_dist > 20.0:
+                continue
+            tp = do - 5.0
+            if tp <= entry:
+                continue
+            return {"entry_time": nb["datetime"], "direction": "long",
+                    "entry": entry, "sl": sl, "tp": tp}
+    return None
+
+
+def _scan_dor(m5: pd.DataFrame, m1: pd.DataFrame | None = None) -> list[dict]:
     """
     Rules:
       - Fires during London Session (15:00-18:00 IST) or NY killzone
       - Price is ≥ 30pt displaced from daily open
       - Current M5 bar closes back toward daily open (reversal confirmation)
-      - SL: 2pt beyond the reversal bar extreme (6-20pt distance band)
+      - If M1 data available: refine entry via M1 FVG within next 10 min
+        (tighter SL → more lots → higher PnL per win, +$20/wk vs pure M5)
+      - Fallback to M5 bar close entry when no M1 FVG forms
+      - SL: 1.5pt beyond FVG boundary (M1) or 2pt beyond bar extreme (M5)
       - TP: daily open ± 5pt buffer
     """
     setups: list[dict] = []
@@ -161,6 +227,14 @@ def _scan_dor(m5: pd.DataFrame) -> list[dict]:
 
         # Short fade: price ≥ do+30 and current bar closes red
         if displacement > 0 and row["close"] < prev["close"] and row["close"] < row["open"]:
+            if m1 is not None:
+                refined = _fvg_entry(m1, row["datetime"], is_short=True, do=do)
+                if refined:
+                    setups.append({
+                        "engine": "DOR", **refined,
+                        "reason": f"DOR short M1-FVG | +{displacement:.1f}pt above DO {do:.2f}",
+                    })
+                    continue
             entry = float(row["close"])
             sl    = float(row["high"]) + 2.0
             sl_dist = sl - entry
@@ -182,6 +256,14 @@ def _scan_dor(m5: pd.DataFrame) -> list[dict]:
 
         # Long fade: price ≤ do-30 and current bar closes green
         if displacement < 0 and row["close"] > prev["close"] and row["close"] > row["open"]:
+            if m1 is not None:
+                refined = _fvg_entry(m1, row["datetime"], is_short=False, do=do)
+                if refined:
+                    setups.append({
+                        "engine": "DOR", **refined,
+                        "reason": f"DOR long M1-FVG | {displacement:.1f}pt below DO {do:.2f}",
+                    })
+                    continue
             entry = float(row["close"])
             sl    = float(row["low"]) - 2.0
             sl_dist = entry - sl
@@ -469,11 +551,16 @@ def run(start_date: str, end_date: str, engines: list[str] | None = None,
     m5 = m5[(m5["datetime"] >= start_ts) & (m5["datetime"] < end_ts)].reset_index(drop=True)
     m5 = _enrich_ist(m5)
 
+    m1 = _load_m1(data_dir)
+    if m1 is not None:
+        m1 = m1[(m1["datetime"] >= start_ts) & (m1["datetime"] < end_ts)].reset_index(drop=True)
+
     setups: list[dict] = []
-    if "DOR" in engines: setups.extend(_scan_dor(m5))
+    if "DOR" in engines: setups.extend(_scan_dor(m5, m1))
     if "ASW" in engines: setups.extend(_scan_asw(m5))
 
-    trades = simulate(m5, setups, use_be=use_be)
+    sim_bars = m1 if m1 is not None else m5
+    trades = simulate(sim_bars, setups, use_be=use_be)
     by_engine = {
         eng: _summary([t for t in trades if t.engine == eng])
         for eng in engines

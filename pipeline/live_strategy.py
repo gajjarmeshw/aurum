@@ -32,6 +32,10 @@ import pandas as pd
 
 import config
 from journal import journal
+from backtest.engine_v7 import (
+    _enrich_ist, _daily_opens, _scan_asw, _fvg_entry,
+    MAX_RISK_PER_TRADE, COMMISSION_PER_001_LOT, NY_START, NY_END, _size_lots,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +57,11 @@ class LiveStrategyRunner:
         self._last_swing_ts: float = 0.0   # per-mode cooldown timestamps
         self._last_scalp_ts: float = 0.0
         self._alert_log: list = []         # last 50 trade events for UI feed
+
+        # DOR+ASW state
+        self._pending_dor: Optional[dict] = None   # M5 DOR signal waiting for M1 FVG
+        self._m5_buf: list[dict] = []              # rolling M5 bar buffer for DOR scanner
+        self._dor_fired_today: set[str] = set()    # date → fired (one DOR per day)
 
         self._load_state()
 
@@ -121,6 +130,174 @@ class LiveStrategyRunner:
             "day_losses":    self._day_losses,
             "alert_log":     self._alert_log,
         }
+
+    # ── DOR + ASW scanner ─────────────────────────────────────
+
+    def _bars_to_enriched_df(self, bars: list[dict]) -> pd.DataFrame:
+        """Convert live bar list to enriched DataFrame for DOR/ASW scanners."""
+        df = self._bars_to_df(bars)
+        if df.empty:
+            return df
+        if df["datetime"].dt.tz is None:
+            df["datetime"] = df["datetime"].dt.tz_localize("UTC")
+        df = _enrich_ist(df)
+        return df
+
+    def _get_daily_open(self, m5_df: pd.DataFrame, date_ist: str) -> Optional[float]:
+        """Return 00:00 UTC open for the given IST date."""
+        opens = _daily_opens(m5_df)
+        return opens.get(date_ist)
+
+    def _check_dor_signal(self, m5_df: pd.DataFrame) -> Optional[dict]:
+        """
+        Check if the latest M5 bar is a DOR signal.
+        Returns signal dict with direction/displacement/daily_open or None.
+        """
+        if len(m5_df) < 2:
+            return None
+
+        ls_start, ls_end = 15 * 60, 18 * 60
+        ny_start = NY_START[0] * 60 + NY_START[1]
+        ny_end   = NY_END[0]   * 60 + NY_END[1]
+
+        row  = m5_df.iloc[-1]
+        prev = m5_df.iloc[-2]
+        minute_ist = int(row["minute_ist"])
+
+        in_window = (ls_start <= minute_ist < ls_end) or (ny_start <= minute_ist < ny_end)
+        if not in_window:
+            return None
+
+        date_ist = str(row["date_ist"])
+        do = self._get_daily_open(m5_df, date_ist)
+        if do is None:
+            return None
+
+        displacement = float(row["close"]) - do
+        if abs(displacement) < 30.0:
+            return None
+
+        is_short = displacement > 0 and row["close"] < prev["close"] and row["close"] < row["open"]
+        is_long  = displacement < 0 and row["close"] > prev["close"] and row["close"] > row["open"]
+        if not is_short and not is_long:
+            return None
+
+        return {
+            "direction":    "short" if is_short else "long",
+            "displacement": displacement,
+            "daily_open":   do,
+            "m5_close_time": row["datetime"],
+            "date_ist":     date_ist,
+        }
+
+    def _check_asw_signal(self, m5_df: pd.DataFrame) -> Optional[dict]:
+        """Return first ASW setup from current M5 data, or None."""
+        setups = _scan_asw(m5_df)
+        if not setups:
+            return None
+        latest_bar_time = m5_df.iloc[-1]["datetime"]
+        for s in reversed(setups):
+            if s["entry_time"] == latest_bar_time:
+                return s
+        return None
+
+    def on_m1_close(self, m1_bars: list[dict], event_bus) -> None:
+        """
+        Called on every M1 candle close.
+        Checks for M1 FVG confirmation of a pending DOR signal.
+        """
+        if self._pending_dor is None:
+            return
+        if not m1_bars:
+            return
+
+        p = self._pending_dor
+        t0 = p["m5_close_time"]
+        if isinstance(t0, str):
+            t0 = pd.Timestamp(t0)
+        if t0.tzinfo is None:
+            t0 = t0.tz_localize("UTC")
+
+        # Expire after 10 minutes
+        last_m1_ts = pd.Timestamp(m1_bars[-1].get("timestamp", 0), unit="s", tz="UTC")
+        if (last_m1_ts - t0).total_seconds() > 600:
+            logger.info("[DOR] M1 FVG window expired — no confirmation found")
+            self._pending_dor = None
+            return
+
+        # Build M1 DataFrame and look for FVG
+        m1_df = self._bars_to_df(m1_bars)
+        if m1_df.empty:
+            return
+        if m1_df["datetime"].dt.tz is None:
+            m1_df["datetime"] = m1_df["datetime"].dt.tz_localize("UTC")
+
+        is_short = p["direction"] == "short"
+        refined = _fvg_entry(m1_df, t0, is_short=is_short, do=p["daily_open"])
+        if refined is None:
+            return
+
+        # FVG confirmed — fire the DOR trade
+        self._pending_dor = None
+        entry    = refined["entry"]
+        sl       = refined["sl"]
+        tp       = refined["tp"]
+        sl_dist  = abs(entry - sl)
+        lots     = _size_lots(sl_dist, MAX_RISK_PER_TRADE)
+
+        if sl_dist < 4.0 or lots < 0.01:
+            return
+        if len(self._open_signals) > 0 or self._pending_setup is not None:
+            logger.info("[DOR] M1 FVG found but trade slot occupied — skipped")
+            return
+
+        direction_str = "bearish" if is_short else "bullish"
+        self._fire_dor_alert(entry, sl, tp, direction_str, lots, sl_dist,
+                             p["displacement"], p["daily_open"], event_bus)
+        entry_time = datetime.now(IST).strftime("%d/%m %H:%M IST")
+        self._open_signals.append({
+            "entry":       entry,
+            "sl":          sl,
+            "tp":          tp,
+            "sl_dist":     sl_dist,
+            "tp_rr":       abs(tp - entry) / sl_dist,
+            "direction":   direction_str,
+            "be_moved":    False,
+            "partial_hit": False,
+            "lots":        lots,
+            "mode":        "DOR",
+            "tf":          "M1",
+            "entry_time":  entry_time,
+        })
+        self._dor_fired_today.add(p["date_ist"])
+        self._save_state()
+        event_bus.publish("live_trades", self.get_live_trades_state())
+
+    def _fire_dor_alert(self, price, sl, tp, direction, lots, sl_dist,
+                        displacement, daily_open, event_bus):
+        is_long  = "bullish" in direction
+        rr       = round(abs(tp - price) / sl_dist, 1)
+        now_ist  = datetime.now(IST).strftime("%d/%m %H:%M IST")
+        msg = (
+            f"{'🟢' if is_long else '🔴'} <b>{'LONG' if is_long else 'SHORT'} XAUUSD — DOR+FVG</b>\n\n"
+            f"Entry: <b>${price:.2f}</b>\n"
+            f"SL:    <b>${sl:.2f}</b>  ({sl_dist:.1f}pt)\n"
+            f"TP:    <b>${tp:.2f}</b>  (1:{rr}R)\n"
+            f"Lots:  <b>{lots}</b>\n\n"
+            f"Displacement: {displacement:+.1f}pt from DO {daily_open:.2f}\n"
+            f"M1 FVG confirmed entry"
+        )
+        try:
+            self.bot.send_message(msg)
+        except Exception as e:
+            logger.error(f"Telegram DOR alert failed: {e}")
+        alert = {"type": "entry", "time": now_ist, "direction": direction,
+                 "mode": "DOR", "price": price, "sl": sl, "tp": tp, "lots": lots}
+        self._log_alert(alert)
+        event_bus.publish("trade_signal", {
+            "price": price, "sl": sl, "tp": tp,
+            "direction": direction, "mode": "DOR", "lots": lots,
+        })
 
     def _reset_day(self, date_str: str):
         self._today = date_str
@@ -204,8 +381,8 @@ class LiveStrategyRunner:
         tp = (price + sl_dist * tp_rr) if is_long else (price - sl_dist * tp_rr)
         return sl_dist, sl, tp, lots
 
-    def on_m5_close(self, m5_bars: list[dict], confluence: dict, ict: dict,
-                    event_bus, indicators=None):
+    def on_m5_close(self, m5_bars: list[dict], confluence: dict, ict: dict,  # noqa: PLR0912
+                    event_bus, indicators=None, m1_bars: list[dict] | None = None):
         """
         Called once per M5 candle close.
         SL / TP / lot sizing mirrors simulation_core.py exactly.
@@ -466,6 +643,97 @@ class LiveStrategyRunner:
             if to_remove:
                 self._save_state()
                 event_bus.publish("live_trades", self.get_live_trades_state())
+
+        # ── 4. DOR+ASW scanner (secondary — only fires when no v6 trade active) ──
+        self._m5_buf = m5_bars or self._m5_buf
+        slot_free = len(self._open_signals) == 0 and self._pending_setup is None
+
+        if slot_free and self._pending_dor is None and self._m5_buf:
+            m5_df = self._bars_to_enriched_df(self._m5_buf)
+            if not m5_df.empty:
+                # DOR check
+                dor_sig = self._check_dor_signal(m5_df)
+                if dor_sig and dor_sig["date_ist"] not in self._dor_fired_today:
+                    if m1_bars:
+                        # Try immediate M1 FVG confirmation from bars already collected
+                        m1_df = self._bars_to_df(m1_bars)
+                        if not m1_df.empty:
+                            if m1_df["datetime"].dt.tz is None:
+                                m1_df["datetime"] = m1_df["datetime"].dt.tz_localize("UTC")
+                            refined = _fvg_entry(
+                                m1_df, dor_sig["m5_close_time"],
+                                is_short=(dor_sig["direction"] == "short"),
+                                do=dor_sig["daily_open"],
+                            )
+                            if refined:
+                                # FVG already confirmed — enter immediately
+                                sl_dist = abs(refined["entry"] - refined["sl"])
+                                lots    = _size_lots(sl_dist, MAX_RISK_PER_TRADE)
+                                if sl_dist >= 4.0 and lots >= 0.01:
+                                    direction_str = "bearish" if dor_sig["direction"] == "short" else "bullish"
+                                    self._fire_dor_alert(
+                                        refined["entry"], refined["sl"], refined["tp"],
+                                        direction_str, lots, sl_dist,
+                                        dor_sig["displacement"], dor_sig["daily_open"], event_bus,
+                                    )
+                                    entry_time = datetime.now(IST).strftime("%d/%m %H:%M IST")
+                                    self._open_signals.append({
+                                        "entry":       refined["entry"],
+                                        "sl":          refined["sl"],
+                                        "tp":          refined["tp"],
+                                        "sl_dist":     sl_dist,
+                                        "tp_rr":       abs(refined["tp"] - refined["entry"]) / sl_dist,
+                                        "direction":   direction_str,
+                                        "be_moved":    False,
+                                        "partial_hit": False,
+                                        "lots":        lots,
+                                        "mode":        "DOR",
+                                        "tf":          "M1",
+                                        "entry_time":  entry_time,
+                                    })
+                                    self._dor_fired_today.add(dor_sig["date_ist"])
+                                    self._save_state()
+                                    event_bus.publish("live_trades", self.get_live_trades_state())
+                            else:
+                                # No FVG yet — queue as pending for on_m1_close
+                                self._pending_dor = dor_sig
+                                logger.info(f"[DOR] Signal queued, waiting for M1 FVG "
+                                            f"({dor_sig['direction']} {dor_sig['displacement']:+.1f}pt)")
+                    else:
+                        self._pending_dor = dor_sig
+
+                # ASW check — fires on M5 reclaim bar, no M1 wait needed
+                if dor_sig is None:
+                    asw_sig = self._check_asw_signal(m5_df)
+                    if asw_sig:
+                        entry   = float(asw_sig["entry"])
+                        sl      = float(asw_sig["sl"])
+                        tp      = float(asw_sig["tp"])
+                        sl_dist = abs(entry - sl)
+                        lots    = _size_lots(sl_dist, MAX_RISK_PER_TRADE)
+                        if sl_dist >= 4.0 and lots >= 0.01:
+                            direction_str = "bearish" if asw_sig["direction"] == "short" else "bullish"
+                            self._fire_dor_alert(
+                                entry, sl, tp, direction_str, lots, sl_dist,
+                                0.0, 0.0, event_bus,
+                            )
+                            entry_time = datetime.now(IST).strftime("%d/%m %H:%M IST")
+                            self._open_signals.append({
+                                "entry":       entry,
+                                "sl":          sl,
+                                "tp":          tp,
+                                "sl_dist":     sl_dist,
+                                "tp_rr":       abs(tp - entry) / sl_dist,
+                                "direction":   direction_str,
+                                "be_moved":    False,
+                                "partial_hit": False,
+                                "lots":        lots,
+                                "mode":        "ASW",
+                                "tf":          "M5",
+                                "entry_time":  entry_time,
+                            })
+                            self._save_state()
+                            event_bus.publish("live_trades", self.get_live_trades_state())
 
     def _journal_trade(self, signal, exit_price, result, pnl, event_bus):
         """Log completed trade to journal and push updated account state to UI."""

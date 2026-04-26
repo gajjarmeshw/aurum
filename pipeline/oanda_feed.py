@@ -26,13 +26,15 @@ OANDA_STREAM  = "https://stream-fxpractice.oanda.com"
 INSTRUMENT    = "XAU_USD"
 
 TF_MAP = {
+    "M1":  ("M1",  60),
     "M5":  ("M5",  300),
     "M15": ("M15", 900),
     "H1":  ("H1",  3600),
     "H4":  ("H4",  14400),
 }
-OANDA_GRAN = {"M5": "M5", "M15": "M15", "H1": "H1", "H4": "H4"}
+OANDA_GRAN = {"M1": "M1", "M5": "M5", "M15": "M15", "H1": "H1", "H4": "H4"}
 CANDLE_COUNT = 500   # bars to fetch per TF — more than enough for all indicators
+M1_CANDLE_COUNT = 300  # ~5 hours of M1 history for DOR/ASW FVG detection
 
 
 class OandaFeed:
@@ -88,7 +90,8 @@ class OandaFeed:
     async def _seed_all(self):
         """Fetch initial candle history for all TFs on startup (non-blocking)."""
         for tf in TF_MAP:
-            candles = await asyncio.to_thread(self._fetch_candles, tf, CANDLE_COUNT)
+            count = M1_CANDLE_COUNT if tf == "M1" else CANDLE_COUNT
+            candles = await asyncio.to_thread(self._fetch_candles, tf, count)
             if candles:
                 self._candles[tf] = candles
                 self._last_closed_ts[tf] = candles[-1]["timestamp"]
