@@ -260,46 +260,49 @@ def create_app(event_bus: EventBus) -> Flask:
 
     @app.route("/api/backtest/run", methods=["POST"])
     def run_backtest():
-        """Trigger a backtest using the Session Expansion strategy."""
-        data = request.get_json()
-        tf = data.get("timeframe", "5min")
+        """Trigger a backtest using the ICT walk-forward engine."""
+        from backtest.walk_forward_engine import BacktestEngine, run_all_timeframes
+        from backtest.simulation_core import simulate_setups
 
-        # 1. Check data exists
-        data_path = config.BASE_DIR / "backtest" / "data" / f"XAUUSD_{tf}.csv"
-        if not data_path.exists():
-            return jsonify({"error": "Historical data not found. Please fetch data first."}), 404
-
-        # 2. Load M5 data
+        data       = request.get_json()
+        tf         = data.get("timeframe", "15min")
         start_date = data.get("start_date")
-        end_date = data.get("end_date")
-        full_df = pd.read_csv(str(data_path))
+        end_date   = data.get("end_date")
+        data_dir   = str(config.BASE_DIR / "backtest" / "data")
 
-        # 3. Choose Engine
-        # Default to the institutional ICT engine (forensic-enabled)
-        # Use new_simulation only if explicitly requested (placeholder for future dropdown)
-        use_session_engine = data.get("strategy") == "session_expansion"
-        
-        if use_session_engine:
+        if tf == "all":
+            # ── All-TF combined mode ──────────────────────────────────────
+            setups, engines = run_all_timeframes(data_dir, start_date, end_date)
+            if not setups:
+                return jsonify({"error": "No setups found. Fetch data first."}), 404
+            # Use M15 full_df for simulation (has highest bar density for MT entry checks)
+            primary_engine = engines.get("15min") or next(iter(engines.values()))
+            result = simulate_setups(setups, primary_engine.full_df, tf_label="M15+H1")
+        elif data.get("strategy") == "session_expansion":
+            data_path = config.BASE_DIR / "backtest" / "data" / f"XAUUSD_{tf}.csv"
+            if not data_path.exists():
+                return jsonify({"error": "Historical data not found. Fetch data first."}), 404
+            full_df = pd.read_csv(str(data_path))
             from backtest.new_simulation import run_session_backtest
             result = run_session_backtest(full_df, start_date, end_date)
-            summary = result["summary"]
         else:
-            from backtest.walk_forward_engine import BacktestEngine
-            from backtest.simulation_core import simulate_setups
-            engine = BacktestEngine(str(data_path), timeframe=tf, start_date=start_date, end_date=end_date)
+            data_path = config.BASE_DIR / "backtest" / "data" / f"XAUUSD_{tf}.csv"
+            if not data_path.exists():
+                return jsonify({"error": "Historical data not found. Fetch data first."}), 404
+            engine = BacktestEngine(str(data_path), timeframe=tf,
+                                    start_date=start_date, end_date=end_date)
             setups = engine.run()
             result = simulate_setups(setups, engine.full_df, tf_label=tf)
-            summary = result["summary"]
 
-        # 4. Save results to CSV for auditing
+        summary = result["summary"]
         save_backtest_results(result["trades"], filename="latest_backtest.csv")
 
         return jsonify({
-            "success": True,
-            "setups_found": len(result["trades"]),
+            "success":          True,
+            "setups_found":     len(result["trades"]),
             "trades_simulated": len(result["trades"]),
-            "summary": summary,
-            "weekly_avg": result["weekly_avg"],
+            "summary":          summary,
+            "weekly_avg":       result["weekly_avg"],
             "msg": (
                 f"Backtest complete. {len(result['trades'])} trades simulated: "
                 f"{summary['wins']}W / {summary['losses']}L. PnL: {summary['total_pnl']}"
@@ -315,15 +318,17 @@ def create_app(event_bus: EventBus) -> Flask:
         start_date = data.get("start_date")
         end_date = data.get("end_date")
         
-        data_path = config.BASE_DIR / "backtest" / "data" / f"XAUUSD_{tf}.csv"
-        
+        # Manual mode uses M15 as primary regardless of "all" selection
+        primary_tf = "15min" if tf == "all" else tf
+        data_path = config.BASE_DIR / "backtest" / "data" / f"XAUUSD_{primary_tf}.csv"
+
         if not data_path.exists():
             return jsonify({"error": "Historical data not found."}), 404
-            
+
         _active_backtest = walk_forward_engine.BacktestEngine(
-            str(data_path), 
-            tf, 
-            start_date=start_date, 
+            str(data_path),
+            primary_tf,
+            start_date=start_date,
             end_date=end_date
         )
         

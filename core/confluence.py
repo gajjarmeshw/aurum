@@ -140,72 +140,73 @@ def compute_confluence(indicators: IndicatorResult, ict_result: dict,
     
     gate2_pass = setup_ok
 
-    # Gate 3: Trigger (M5 BOS + Displacement)
+    # Gate 3: Trigger (M5 BOS or ChoCH + Displacement FVG)
+    # ChoCH accepted alongside BOS — in trending markets the first structure
+    # break is a ChoCH, not a full BOS. Requiring only BOS locks out valid entries.
     gate3_pass = False
     trigger_detail = "Waiting for M5 break + FVG"
-    
-    has_m5_bos = False
-    if indicators.bos_m5:
-        last_m5_bos = indicators.bos_m5[-1].direction
-        if (is_bullish_bias and last_m5_bos == "bullish") or (is_bearish_bias and last_m5_bos == "bearish"):
-            has_m5_bos = True
-            
-    # Gate 3B: Displacement — FVG must be FRESH (within the last N M5 candles)
-    # Using a lookback window instead of index comparison because BOS.index is
-    # always stored as len(candles)-1, making direct index comparison unreliable.
-    # A "fresh" FVG = formed within the last N M5 bars (e.g. 15 bars = ~75 minutes).
+
+    has_m5_break = False
+    m5_break_type = ""
+    all_m5_breaks = sorted(indicators.bos_m5 + indicators.choch_m5, key=lambda x: x.index)
+    if all_m5_breaks:
+        last_break = all_m5_breaks[-1]
+        if (is_bullish_bias and last_break.direction == "bullish") or \
+           (is_bearish_bias and last_break.direction == "bearish"):
+            has_m5_break = True
+            m5_break_type = "BOS" if last_break in indicators.bos_m5 else "ChoCH"
+
+    # Gate 3B: Displacement — fresh M5 FVG in same direction (within last N bars)
     has_displacement = False
     target_dir = "bullish" if is_bullish_bias else "bearish"
     lookback = config.SCALP_RISK.get("displacement_lookback", 20)
 
-    if has_m5_bos and indicators.fvgs_m5:
-        if indicators.m5_candles:
-            min_fresh_index = max(0, len(indicators.m5_candles) - lookback)
-        else:
-            min_fresh_index = 0
+    if has_m5_break and indicators.fvgs_m5:
+        min_fresh_index = max(0, len(indicators.m5_candles) - lookback) if indicators.m5_candles else 0
         fresh_fvgs = [
             f for f in indicators.fvgs_m5
-            if f.direction == target_dir
-            and not f.filled
-            and f.index >= min_fresh_index
+            if f.direction == target_dir and not f.filled and f.index >= min_fresh_index
         ]
         if fresh_fvgs:
             has_displacement = True
 
-    if has_m5_bos and has_displacement:
+    if has_m5_break and has_displacement:
         gate3_pass = True
-        trigger_detail = f"✅ M5 {target_dir.title()} BOS + FVG"
-    elif has_m5_bos:
-        trigger_detail = "⚠️ BOS confirmed, waiting for FVG displacement"
+        trigger_detail = f"M5 {target_dir.title()} {m5_break_type} + FVG"
+    elif has_m5_break:
+        trigger_detail = f"⚠️ M5 {m5_break_type} confirmed, waiting for FVG"
 
     # ── SCALP KILLZONE GUARD ──────────────────────────────────────
     kz_active_for_scalp = session_info.get("killzone_active", False)
 
     # ── SCALP CONFLUENCE GUARD ────────────────────────────────────
-    # Even if gates pass, we want some HTF confirmation (Confluence Score)
-    # to avoid trading noise in weak market environments.
-    confluence_ok = total_swing >= config.SCALP_RISK.get("min_confluence", 2.0)
-
     scalp_gates_passed = sum([gate1_pass, gate2_pass, gate3_pass])
+    all_scalp_ok = gate1_pass and gate2_pass and gate3_pass and sanity_ok and kz_active_for_scalp
     scalp_mode = {
-        "is_valid": gate1_pass and gate2_pass and gate3_pass and sanity_ok and kz_active_for_scalp and confluence_ok,
-        "score": float(scalp_gates_passed),   # 3.0 when all gates pass; gated at 3.0 in simulation
+        "is_valid": all_scalp_ok,
+        "score": float(scalp_gates_passed),
+        "kz_active": kz_active_for_scalp,
         "gates": {
              "bias": {
-                 "pass": gate1_pass, 
+                 "pass": gate1_pass,
                  "detail": bias_dir.title() if gate1_pass else "No Fractal Bias",
                  "status": "✅" if gate1_pass else "❌"
              },
              "setup": {
-                 "pass": gate2_pass, 
+                 "pass": gate2_pass,
                  "detail": setup_str,
                  "status": "✅" if gate2_pass else "❌"
              },
              "trigger": {
-                 "pass": gate3_pass, 
+                 "pass": gate3_pass,
                  "detail": trigger_detail,
                  "status": "✅" if gate3_pass else "❌"
-             }
+             },
+             "killzone": {
+                 "pass": kz_active_for_scalp,
+                 "detail": session_info.get("killzone_name") or session_info.get("session_label") or "Outside killzone",
+                 "status": "✅" if kz_active_for_scalp else "❌"
+             },
         }
     }
 

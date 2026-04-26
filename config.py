@@ -38,7 +38,7 @@ MAX_LOT_TRADE1 = 0.08
 MAX_LOT_TRADE2 = 0.02
 MAX_RISK_TRADE1 = 25           # USD
 MAX_RISK_TRADE2 = 15           # USD
-MAX_TRADES_PER_DAY = 4          # Asian + London + NY + one buffer; daily loss cap still governs
+MAX_TRADES_PER_DAY = 6
 WEEKLY_TARGET = 300            # USD
 DAILY_SOFT_CAP = 300            # USD profit — warning
 DAILY_HARD_CAP = 1000           # USD profit — lock
@@ -81,8 +81,8 @@ SWING_WEIGHTS = {
     "dxy_alignment":       1.0,  # HARD GATE (Raised from 0.5)
 }
 SWING_SCORE_MAX = sum(SWING_WEIGHTS.values())
-SWING_SCORE_MIN_LIVE = 4.0
-SWING_SCORE_MIN_BACKTEST = 3.8  # Score 3.0-3.2 setups historically lose; 3.8+ has >60% WR
+SWING_SCORE_MIN_LIVE = 3.8
+SWING_SCORE_MIN_BACKTEST = 3.8
 
 SWING_RISK = {
     "lots": 0.08,            # 0.08 × 10pt SL × 100 = $80 actual risk; gets 5m to ~$316/week
@@ -109,8 +109,32 @@ SCALP_RISK = {
 # 15m: set True  — 15m structure aligns with prevailing trend; filter cuts 42% loss rate
 TREND_FILTER_ENABLED = False
 
-SWING_COOLDOWN_SECONDS = 3 * 3600   # 3h — allows Asian+London+NY all to fire in same day
-SCALP_COOLDOWN_SECONDS = 15 * 60    # 15-minute gap between scalp entries
+SWING_COOLDOWN_SECONDS = 1 * 3600
+SCALP_COOLDOWN_SECONDS = 15 * 60
+
+# ─── Strategy v6 — Data-Driven A+ filters ───────────────────
+# Empirically derived from the 6-month backtest (see backtest/analyze_winners.py);
+# each flag drops a segment with verified negative expectancy.
+STRATEGY_V6_ENABLED = True
+
+V6_SKIP_H1_PRIMARY    = True
+V6_SKIP_LONDON_OPEN   = True
+V6_SKIP_ASIAN_SCALP   = True
+V6_SWING_SCORE_MIN    = 5.5
+V6_SKIP_ATR_BANDS     = [(0.0, 16.0), (20.0, 25.0)]
+V6_SKIP_ADX_BAND      = (25.0, 30.0)
+V6_SKIP_DR_ALIGNED    = True
+
+# Power sizing — scale up inside the Score × ATR × DR-equilibrium slice.
+V6_POWER_LOTS         = 0.04
+V6_POWER_MIN_SCORE    = 5.5
+V6_POWER_MIN_ATR      = 25.0
+V6_POWER_DR_ZONES     = {"equilibrium"}
+
+# Momentum Expansion — retained, but only on M15 primary.
+V6_MOMENTUM_ENABLED   = True
+V6_MOMENTUM_MIN_ATR   = 25.0
+V6_MOMENTUM_MIN_ADX   = 30.0
 SIGNAL_COOLDOWN_BARS = 0
 SIGNAL_REDUNDANCY_CHECK = True
 

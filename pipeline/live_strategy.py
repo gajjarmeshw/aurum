@@ -22,6 +22,7 @@ State held
   self._day_losses       — loss count today (stop after 2, matches backtest)
 """
 
+import json
 import math
 import logging
 from datetime import datetime, timezone, timedelta
@@ -30,10 +31,14 @@ from typing import Optional
 import pandas as pd
 
 import config
+from journal import journal
 
 logger = logging.getLogger(__name__)
 
 IST = timezone(timedelta(hours=5, minutes=30))
+
+_STATE_FILE = config.BASE_DIR / "live_trade_state.json"
+_ALERT_LOG  = config.BASE_DIR / "live_alerts.json"   # rolling last 50 alerts
 
 
 class LiveStrategyRunner:
@@ -47,6 +52,75 @@ class LiveStrategyRunner:
         self._pending_setup = None
         self._last_swing_ts: float = 0.0   # per-mode cooldown timestamps
         self._last_scalp_ts: float = 0.0
+        self._alert_log: list = []         # last 50 trade events for UI feed
+
+        self._load_state()
+
+    # ── State persistence ─────────────────────────────────────
+
+    def _load_state(self):
+        """Restore open signals and alert log from disk after restart."""
+        try:
+            if _STATE_FILE.exists():
+                state = json.loads(_STATE_FILE.read_text())
+                self._today       = state.get("today")
+                self._day_pnl     = state.get("day_pnl", 0.0)
+                self._day_losses  = state.get("day_losses", 0)
+                self._open_signals = state.get("open_signals", [])
+                logger.info(
+                    f"[Live] Restored state: {len(self._open_signals)} open signal(s), "
+                    f"day_pnl=${self._day_pnl:.2f}, losses={self._day_losses}"
+                )
+        except Exception as e:
+            logger.warning(f"[Live] Could not load state: {e}")
+
+        try:
+            if _ALERT_LOG.exists():
+                self._alert_log = json.loads(_ALERT_LOG.read_text())
+        except Exception:
+            self._alert_log = []
+
+    def _save_state(self):
+        """Persist open signals to disk so restarts don't lose trade tracking."""
+        try:
+            # Strip non-serialisable 'indicators' before saving
+            signals_clean = [{k: v for k, v in s.items() if k != "indicators"}
+                             for s in self._open_signals]
+            state = {
+                "today":        self._today,
+                "day_pnl":      self._day_pnl,
+                "day_losses":   self._day_losses,
+                "open_signals": signals_clean,
+            }
+            _STATE_FILE.write_text(json.dumps(state, indent=2))
+        except Exception as e:
+            logger.warning(f"[Live] Could not save state: {e}")
+
+    def _log_alert(self, alert: dict):
+        """Append alert to rolling log (last 50), save to disk."""
+        self._alert_log.insert(0, alert)
+        if len(self._alert_log) > 50:
+            self._alert_log = self._alert_log[:50]
+        try:
+            _ALERT_LOG.write_text(json.dumps(self._alert_log, indent=2))
+        except Exception:
+            pass
+
+    def get_live_trades_state(self) -> dict:
+        """Return serialisable snapshot for UI / EventBus."""
+        signals_clean = [{k: v for k, v in s.items() if k != "indicators"}
+                         for s in self._open_signals]
+        pending_clean = None
+        if self._pending_setup:
+            pending_clean = {k: v for k, v in self._pending_setup.items()
+                             if k != "indicators"}
+        return {
+            "open_signals":  signals_clean,
+            "pending_setup": pending_clean,
+            "day_pnl":       round(self._day_pnl, 2),
+            "day_losses":    self._day_losses,
+            "alert_log":     self._alert_log,
+        }
 
     def _reset_day(self, date_str: str):
         self._today = date_str
@@ -55,6 +129,7 @@ class LiveStrategyRunner:
         self._last_alert_minute = -1
         self._open_signals = []
         self._pending_setup = None
+        self._save_state()
         # cooldowns persist across days intentionally (3h swing cooldown spans midnight)
 
     def _bars_to_df(self, bars: list[dict]) -> pd.DataFrame:
@@ -208,6 +283,59 @@ class LiveStrategyRunner:
                         gate_ok = False
                         logger.debug("[Live] Swing skipped — missing sweep or FVG/OB")
 
+                # Gate H: V6 filters — mirror simulation_core exactly for live/backtest parity
+                if gate_ok and config.STRATEGY_V6_ENABLED:
+                    adx        = indicators.adx        if indicators else 0.0
+                    dr_zone    = ""
+                    if indicators:
+                        try:
+                            from core.dealing_range import compute_dealing_range
+                            dr = compute_dealing_range(
+                                indicators.swing_highs_h4, indicators.swing_lows_h4
+                            )
+                            dr_zone = dr.zone if dr.is_valid else ""
+                        except Exception:
+                            pass
+                    kz_name    = confluence.get("session_label", "")
+                    swing_score = float(confluence.get("swing", {}).get("score", 0.0))
+
+                    # Skip H1 primary (only M15 entries)
+                    if config.V6_SKIP_H1_PRIMARY and ict.get("timeframe") == "H1":
+                        gate_ok = False
+                        logger.debug("[Live] V6: skipped H1 primary")
+
+                    # Skip London Open killzone
+                    if gate_ok and config.V6_SKIP_LONDON_OPEN and "London Open" in kz_name:
+                        gate_ok = False
+                        logger.debug("[Live] V6: skipped London Open")
+
+                    # Skip Asian scalps
+                    if gate_ok and not is_swing and config.V6_SKIP_ASIAN_SCALP and "Asian" in kz_name:
+                        gate_ok = False
+                        logger.debug("[Live] V6: skipped Asian scalp")
+
+                    # ATR band filter
+                    if gate_ok and any(lo <= atr < hi for lo, hi in config.V6_SKIP_ATR_BANDS):
+                        gate_ok = False
+                        logger.debug(f"[Live] V6: ATR {atr:.1f} in skip band")
+
+                    # ADX band filter
+                    if gate_ok:
+                        band_lo, band_hi = config.V6_SKIP_ADX_BAND
+                        if band_lo <= adx < band_hi:
+                            gate_ok = False
+                            logger.debug(f"[Live] V6: ADX {adx:.1f} in skip band")
+
+                    # Swing score minimum
+                    if gate_ok and is_swing and swing_score < config.V6_SWING_SCORE_MIN:
+                        gate_ok = False
+                        logger.debug(f"[Live] V6: swing score {swing_score} < {config.V6_SWING_SCORE_MIN}")
+
+                    # DR aligned filter
+                    if gate_ok and config.V6_SKIP_DR_ALIGNED and dr_zone == "aligned":
+                        gate_ok = False
+                        logger.debug("[Live] V6: skipped DR aligned")
+
                 if gate_ok:
                     # Stamp cooldown on SEEN (same as simulation_core)
                     if is_swing:
@@ -223,14 +351,17 @@ class LiveStrategyRunner:
                         "mt_price":     mt_price,
                         "direction":    ict.get("direction", "neutral"),
                         "mode":         mode,
+                        "tf":           "M5",
                         "confluence":   confluence.get("total", 0.0),
                         "bars_waited":  0,
                         "triggered_at": ist_min,
+                        "time_ist":     bar_ts.strftime("%H:%M IST"),
                         "indicators":   indicators,
                         "atr":          atr,
                     }
                     self._last_alert_minute = ist_min
                     logger.info(f"[Live] {mode} setup detected. MT pullback at ${mt_price:.2f}")
+                    event_bus.publish("live_trades", self.get_live_trades_state())
 
         # ── 2. Handle Pending MT Entry ──
         if self._pending_setup:
@@ -252,16 +383,26 @@ class LiveStrategyRunner:
 
                 if sl_dist >= 4.0:   # degenerate SL guard (matches simulation_core)
                     self._fire_alert(price, sl, tp, setup["direction"], mode, lots, sl_dist, confluence, event_bus)
+                    entry_time = bar_ts.strftime("%d/%m %H:%M IST")
+                    tp_price   = (price + sl_dist * (config.SWING_RISK["tp_rr"] if mode != "Scalp" else config.SCALP_RISK["tp_rr"])) \
+                                 if "bullish" in setup["direction"] \
+                                 else (price - sl_dist * (config.SWING_RISK["tp_rr"] if mode != "Scalp" else config.SCALP_RISK["tp_rr"]))
                     self._open_signals.append({
                         "entry":       price,
                         "sl":          sl,
+                        "tp":          tp_price,
                         "sl_dist":     sl_dist,
                         "tp_rr":       config.SWING_RISK["tp_rr"] if mode != "Scalp" else config.SCALP_RISK["tp_rr"],
                         "direction":   setup["direction"],
                         "be_moved":    False,
                         "partial_hit": False,
                         "lots":        lots,
+                        "mode":        mode,
+                        "tf":          setup.get("tf", "M5"),
+                        "entry_time":  entry_time,
                     })
+                    self._save_state()
+                    event_bus.publish("live_trades", self.get_live_trades_state())
                 else:
                     logger.info(f"[Live] Degenerate SL ({sl_dist:.1f}pt) — skipping entry.")
 
@@ -270,6 +411,7 @@ class LiveStrategyRunner:
             elif self._pending_setup["bars_waited"] > 3:
                 logger.info("[Live] MT Entry expired (3 bars without pullback).")
                 self._pending_setup = None
+                event_bus.publish("live_trades", self.get_live_trades_state())
 
         # ── 3. Track open signals: partial TP → BE, full TP, and SL hit ──────────
         if self._open_signals:
@@ -321,6 +463,35 @@ class LiveStrategyRunner:
             for s in to_remove:
                 self._open_signals.remove(s)
 
+            if to_remove:
+                self._save_state()
+                event_bus.publish("live_trades", self.get_live_trades_state())
+
+    def _journal_trade(self, signal, exit_price, result, pnl, event_bus):
+        """Log completed trade to journal and push updated account state to UI."""
+        try:
+            journal.log_trade({
+                "direction":       signal["direction"],
+                "entry":           signal["entry"],
+                "sl":              signal["sl"],
+                "tp":              signal.get("tp", 0),
+                "exit_price":      exit_price,
+                "result":          result,
+                "pnl":             pnl,
+                "lot_size":        signal["lots"],
+                "grade":           signal.get("mode", "Swing"),
+                "confluence_score": 0,
+                "session":         "Live",
+            })
+        except Exception as e:
+            logger.error(f"[Live] Journal write failed: {e}")
+        # Push fresh account state to dashboard
+        try:
+            account = journal.get_account_state()
+            event_bus.publish("account_update", account)
+        except Exception as e:
+            logger.error(f"[Live] Account state publish failed: {e}")
+
     def _fire_alert(self, price, sl, tp, direction, mode, lots, sl_dist, confluence, event_bus):
         """Send Telegram ICT signal + publish trade_signal event."""
         rr = config.SWING_RISK["tp_rr"] if mode != "Scalp" else config.SCALP_RISK["tp_rr"]
@@ -338,10 +509,14 @@ class LiveStrategyRunner:
             f"Confluence: {confluence.get('total', 0.0):.1f} | ATR: {confluence.get('atr_h1', 0):.1f}pt",
         ]
         text = "\n".join(msg_lines)
+        now_ist = datetime.now(IST).strftime("%d/%m %H:%M IST")
         try:
             self.bot.send_message(text)
         except Exception as e:
             logger.error(f"Telegram alert failed: {e}")
+        alert = {"type": "entry", "time": now_ist, "direction": direction,
+                 "mode": mode, "price": price, "sl": sl, "tp": tp, "lots": lots}
+        self._log_alert(alert)
         event_bus.publish("trade_signal", {
             "price": price, "sl": sl, "tp": tp,
             "direction": direction, "mode": mode, "lots": lots,
@@ -349,6 +524,7 @@ class LiveStrategyRunner:
 
     def _fire_partial_alert(self, signal, price, new_sl, event_bus):
         """50% closed at 1R — runner now risk-free."""
+        now_ist = datetime.now(IST).strftime("%d/%m %H:%M IST")
         text = (
             f"💰 <b>PARTIAL PROFIT (1R HIT)</b>\n\n"
             f"✅ Close 50% of {signal['direction'].upper()} position @ <b>${price:.2f}</b>\n"
@@ -359,10 +535,14 @@ class LiveStrategyRunner:
             self.bot.send_message(text)
         except Exception as e:
             logger.error(f"Telegram Partial alert failed: {e}")
+        alert = {"type": "partial_tp", "time": now_ist, "direction": signal["direction"],
+                 "price": price, "new_sl": new_sl}
+        self._log_alert(alert)
         event_bus.publish("alert", {"type": "partial_tp", "message": f"1R hit for {signal['direction']}"})
 
     def _fire_tp_alert(self, signal, price, pnl, event_bus):
         """Full TP (runner) hit."""
+        now_ist = datetime.now(IST).strftime("%d/%m %H:%M IST")
         text = (
             f"🏆 <b>FULL TP HIT ({signal['tp_rr']}R)</b>\n\n"
             f"✅ Close remaining {signal['direction'].upper()} position @ <b>${price:.2f}</b>\n"
@@ -373,10 +553,15 @@ class LiveStrategyRunner:
             self.bot.send_message(text)
         except Exception as e:
             logger.error(f"Telegram TP alert failed: {e}")
+        alert = {"type": "tp_hit", "time": now_ist, "direction": signal["direction"],
+                 "price": price, "pnl": round(pnl, 2)}
+        self._log_alert(alert)
+        self._journal_trade(signal, price, "WIN", round(pnl, 2), event_bus)
         event_bus.publish("alert", {"type": "tp_hit", "pnl": pnl})
 
     def _fire_sl_alert(self, signal, price, loss, event_bus):
         """Full stop loss hit — no partial was taken."""
+        now_ist = datetime.now(IST).strftime("%d/%m %H:%M IST")
         text = (
             f"🛑 <b>STOP LOSS HIT</b>\n\n"
             f"❌ {signal['direction'].upper()} stopped @ <b>${price:.2f}</b>\n"
@@ -387,10 +572,15 @@ class LiveStrategyRunner:
             self.bot.send_message(text)
         except Exception as e:
             logger.error(f"Telegram SL alert failed: {e}")
+        alert = {"type": "sl_hit", "time": now_ist, "direction": signal["direction"],
+                 "price": price, "pnl": round(loss, 2)}
+        self._log_alert(alert)
+        self._journal_trade(signal, price, "LOSS", round(loss, 2), event_bus)
         event_bus.publish("alert", {"type": "sl_hit", "pnl": loss})
 
     def _fire_be_exit_alert(self, signal, price, partial_pnl, event_bus):
         """Runner stopped at breakeven after partial was already taken."""
+        now_ist = datetime.now(IST).strftime("%d/%m %H:%M IST")
         text = (
             f"⚪ <b>RUNNER CLOSED AT BREAKEVEN</b>\n\n"
             f"Remaining {signal['direction'].upper()} position exited @ <b>${price:.2f}</b>\n"
@@ -401,4 +591,8 @@ class LiveStrategyRunner:
             self.bot.send_message(text)
         except Exception as e:
             logger.error(f"Telegram BE exit alert failed: {e}")
+        alert = {"type": "be_exit", "time": now_ist, "direction": signal["direction"],
+                 "price": price, "pnl": round(partial_pnl, 2)}
+        self._log_alert(alert)
+        self._journal_trade(signal, price, "BE", round(partial_pnl, 2), event_bus)
         event_bus.publish("alert", {"type": "be_exit", "pnl": partial_pnl})

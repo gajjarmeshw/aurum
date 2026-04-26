@@ -250,6 +250,8 @@ async function submitPsychology() {
             if (badge) { badge.className = 'chip chip-green'; }
             const reportBtn = document.getElementById('btn-generate-report');
             if (reportBtn) reportBtn.disabled = false;
+            const hint = document.getElementById('psych-hint');
+            if (hint) { hint.textContent = 'REPORT READY TO GENERATE'; hint.style.color = 'var(--green)'; }
             showBanner('✅ Psychology check passed — report unlocked', 'green');
         }
     } catch (e) {
@@ -442,6 +444,8 @@ class GoldAnalystSSE {
         this.es.addEventListener('indicators',           e => this.onIndicators(JSON.parse(e.data)));
         this.es.addEventListener('market_regime',        e => this.renderRegime(JSON.parse(e.data)));
         this.es.addEventListener('dealing_range_update', e => this.onDealingRange(JSON.parse(e.data)));
+        this.es.addEventListener('live_trades',          e => this.onLiveTrades(JSON.parse(e.data)));
+        this.es.addEventListener('account_update',       e => this.onAccountUpdate(JSON.parse(e.data)));
 
         this.es.onopen  = () => {
             this.setStatus(true);
@@ -551,8 +555,6 @@ class GoldAnalystSSE {
         let max_score = 6.5;
         let isSetup = false;
         let isWatching = false;
-        let actionMsg = data.london_potential ? "⏰ LONDON SETUP FORMING" : "SCANNING";
-        
         _setEl('ticker-dir', data.direction || '—');
 
         const chip = document.getElementById('trade-signal-chip');
@@ -676,7 +678,8 @@ class GoldAnalystSSE {
         if (!body) return;
 
         const rows = Object.entries(gates).map(([key, gate]) => {
-            const name = "GATE " + (key === 'bias' ? '1: H1 Bias' : key === 'setup' ? '2: M15 Setup' : '3: M5 Trigger');
+            const labels = { bias: 'GATE 1: H1 Bias', setup: 'GATE 2: M15 Setup', trigger: 'GATE 3: M5 Trigger', killzone: 'GATE 4: Killzone' };
+            const name = labels[key] || key.toUpperCase();
             const passed = gate.pass;
             const status = gate.status || (passed ? '✅' : '❌');
             const cls = passed ? 'passed' : 'failed';
@@ -857,14 +860,7 @@ class GoldAnalystSSE {
         }
 
         if (data.account) {
-            const pnl = data.account.weekly_pnl || 0;
-            _setEl('weekly-pnl', pnl.toFixed(0));
-            _setEl('daily-pnl', '$' + (data.account.daily_pnl || 0).toFixed(0));
-            _setEl('trades-today', data.account.trades_today || 0);
-            const pnlBig = document.getElementById('weekly-pnl-display');
-            if (pnlBig) pnlBig.className = 'pnl-big ' + (pnl > 0 ? 'pos' : pnl < 0 ? 'neg' : '');
-            const prog = document.getElementById('weekly-progress');
-            if (prog) prog.style.width = Math.min(100, (pnl / 300) * 100) + '%';
+            this.onAccountUpdate(data.account);
         }
 
         if (data.indicator_update) {
@@ -895,6 +891,101 @@ class GoldAnalystSSE {
 
         if (data.indicators) {
             this.onIndicators(data.indicators);
+        }
+
+        if (data.live_trades) {
+            this.onLiveTrades(data.live_trades);
+        }
+
+        if (data.account_update) {
+            this.onAccountUpdate(data.account_update);
+        }
+    }
+
+    onAccountUpdate(data) {
+        const pnl = data.weekly_pnl || 0;
+        _setEl('weekly-pnl', (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(0));
+        _setEl('daily-pnl', (data.daily_pnl >= 0 ? '+$' : '-$') + Math.abs(data.daily_pnl || 0).toFixed(0));
+        _setEl('trades-today', data.trades_today || 0);
+        const pnlBig = document.getElementById('weekly-pnl-display');
+        if (pnlBig) pnlBig.className = 'pnl-big ' + (pnl > 0 ? 'pos' : pnl < 0 ? 'neg' : '');
+        const prog = document.getElementById('weekly-progress');
+        if (prog) prog.style.width = Math.min(100, Math.max(0, (pnl / 300) * 100)) + '%';
+    }
+
+    onLiveTrades(data) {
+        const pending    = data.pending_setup;
+        const signals    = data.open_signals   || [];
+        const alertLog   = data.alert_log      || [];
+        const statusChip = document.getElementById('live-trade-status-chip');
+        const pendingBox = document.getElementById('live-pending-box');
+        const openDiv    = document.getElementById('live-open-signals');
+        const logDiv     = document.getElementById('live-alert-log');
+
+        // ── Status chip ──
+        if (statusChip) {
+            if (signals.length > 0) {
+                statusChip.textContent = `${signals.length} OPEN`;
+                statusChip.className = 'chip chip-green';
+            } else if (pending) {
+                statusChip.textContent = 'PENDING';
+                statusChip.className = 'chip chip-amber';
+            } else {
+                statusChip.textContent = 'NO SIGNAL';
+                statusChip.className = 'chip chip-dim';
+            }
+        }
+
+        // ── Pending setup ──
+        if (pendingBox) {
+            if (pending) {
+                pendingBox.style.display = 'block';
+                const d = document.getElementById('live-pending-detail');
+                if (d) d.innerHTML =
+                    `<span style="color:#f59e0b">${pending.tf || 'M5'} · ${pending.mode || '—'}</span>  ${(pending.direction||'').toUpperCase()}<br>` +
+                    `MT Entry: <b style="color:var(--t1)">$${(pending.mt_price || 0).toFixed(2)}</b>  ` +
+                    `@ ${pending.time_ist || '—'}<br>` +
+                    `Bars waited: ${pending.bars_waited || 0} / 3`;
+            } else {
+                pendingBox.style.display = 'none';
+            }
+        }
+
+        // ── Open signals ──
+        if (openDiv) {
+            if (signals.length === 0) {
+                openDiv.innerHTML = '';
+            } else {
+                openDiv.innerHTML = signals.map(s => {
+                    const isLong  = (s.direction || '').includes('bullish');
+                    const arrow   = isLong ? '↑' : '↓';
+                    const clr     = isLong ? '#00ffa3' : '#ff2d6b';
+                    const partial = s.partial_hit ? ' · <span style="color:#f59e0b">1R HIT — BE</span>' : '';
+                    return `<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:6px;padding:10px;margin-bottom:6px;font-family:'Space Mono',monospace;font-size:10px;line-height:1.9;">
+                        <div style="color:${clr};font-size:11px;margin-bottom:4px;">${arrow} ${(s.direction||'').toUpperCase()} &nbsp;<span style="color:var(--t3)">${s.tf||'M5'} · ${s.mode||''}</span>${partial}</div>
+                        <div>Entry <b style="color:var(--t1)">$${(s.entry||0).toFixed(2)}</b> &nbsp;·&nbsp; ${s.entry_time || ''}</div>
+                        <div>SL <span style="color:#ff2d6b">$${(s.sl||0).toFixed(2)}</span> &nbsp;·&nbsp; TP <span style="color:#00ffa3">$${(s.tp||0).toFixed(2)}</span> &nbsp;·&nbsp; ${s.lots} lots</div>
+                    </div>`;
+                }).join('');
+            }
+        }
+
+        // ── Alert log ──
+        if (logDiv) {
+            if (alertLog.length === 0) {
+                logDiv.innerHTML = '<div style="font-size:10px;color:var(--t3);font-family:\'Space Mono\',monospace;">No alerts yet</div>';
+            } else {
+                const icons = { entry: '💎', partial_tp: '💰', tp_hit: '🏆', sl_hit: '🛑', be_exit: '⚪' };
+                logDiv.innerHTML = alertLog.map(a => {
+                    const icon    = icons[a.type] || '•';
+                    const pnlStr  = a.pnl != null ? ` &nbsp;<b style="color:${a.pnl>=0?'#00ffa3':'#ff2d6b'}">${a.pnl>=0?'+':''}$${a.pnl}</b>` : '';
+                    const priceStr = a.price != null ? ` @ $${(+a.price).toFixed(2)}` : '';
+                    return `<div style="display:flex;justify-content:space-between;font-size:10px;font-family:'Space Mono',monospace;color:var(--t2);padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.04);">
+                        <span>${icon} ${a.type.replace('_',' ').toUpperCase()}${priceStr}${pnlStr}</span>
+                        <span style="color:var(--t3)">${a.time || ''}</span>
+                    </div>`;
+                }).join('');
+            }
         }
     }
 }

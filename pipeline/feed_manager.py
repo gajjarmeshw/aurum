@@ -292,6 +292,8 @@ class FeedManager:
         for tf in ["M5", "M15", "H1", "H4"]:
             self._publish_candles(tf)
         self._publish_live_indicators(force=True)
+        # Push restored trade state so UI shows any open signals from before restart
+        self.event_bus.publish("live_trades", self.live_strategy.get_live_trades_state())
 
 
 async def run_pipeline(event_bus: EventBus):

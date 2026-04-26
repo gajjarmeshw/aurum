@@ -166,6 +166,26 @@
       <div class="row"><span class="row-label">Sessions</span><span class="row-value"><span id="trades-today">0</span> / 2</span></div>
     </div>
 
+    <!-- Live Trade Feed -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-label">Live Trade Feed</span>
+        <span class="chip chip-dim" id="live-trade-status-chip">NO SIGNAL</span>
+      </div>
+      <!-- Pending setup -->
+      <div id="live-pending-box" style="display:none;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.3);border-radius:6px;padding:10px;margin-bottom:8px;">
+        <div style="font-size:9px;color:#f59e0b;letter-spacing:1px;font-family:'Space Mono',monospace;margin-bottom:6px;">⏳ PENDING MT ENTRY</div>
+        <div id="live-pending-detail" style="font-size:11px;color:var(--t2);font-family:'Space Mono',monospace;line-height:1.8;"></div>
+      </div>
+      <!-- Open signals -->
+      <div id="live-open-signals" style="margin-bottom:8px;"></div>
+      <!-- Alert log -->
+      <div style="font-size:9px;color:var(--t3);letter-spacing:1px;margin-bottom:6px;">ALERT LOG</div>
+      <div id="live-alert-log" style="max-height:180px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;">
+        <div style="font-size:10px;color:var(--t3);font-family:'Space Mono',monospace;">No alerts yet</div>
+      </div>
+    </div>
+
     <!-- Trade Ops -->
     <div class="card">
       <div class="card-header">
@@ -179,7 +199,7 @@
         <button class="btn btn-primary btn-block" id="btn-generate-report" disabled onclick="handleGenerateReport()">
           <i class="fas fa-file-alt"></i>&nbsp; Generate Report
         </button>
-        <div style="font-size:9px;color:var(--t3);text-align:center;letter-spacing:0.5px;font-family:'Space Mono',monospace;">
+        <div id="psych-hint" style="font-size:9px;color:var(--t3);text-align:center;letter-spacing:0.5px;font-family:'Space Mono',monospace;">
           COMPLETE PSYCH CHECK TO UNLOCK
         </div>
       </div>
@@ -223,8 +243,9 @@
       <div class="form-group">
         <label class="form-label">Timeframe</label>
         <select id="bt-timeframe">
+          <option value="all" selected>All TFs (M5+M15+H1)</option>
           <option value="5min">5 Min (M5)</option>
-          <option value="15min" selected>15 Min (M15)</option>
+          <option value="15min">15 Min (M15)</option>
           <option value="1h">1 Hour (H1)</option>
         </select>
       </div>

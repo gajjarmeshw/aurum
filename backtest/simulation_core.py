@@ -28,7 +28,7 @@ import pandas as pd
 from datetime import datetime, timezone
 
 import config
-from backtest.trade_simulator import TradeSimulator, Trade
+from backtest.trade_simulator import TradeSimulator
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,25 @@ def _bar_date(ts_or_str) -> str:
         return str(pd.to_datetime(ts_or_str).date())
     except Exception:
         return str(ts_or_str)[:10]
+
+
+def _setup_dr_zone(setup: dict) -> str:
+    """Return "discount" | "equilibrium" | "premium" | "unknown" from setup's H4 swings."""
+    levels = setup.get("levels", {}) or {}
+    hi_list = levels.get("swing_highs_h4", [])
+    lo_list = levels.get("swing_lows_h4", [])
+    if not hi_list or not lo_list:
+        return "unknown"
+    dr_hi = hi_list[-1]["price"]
+    dr_lo = lo_list[-1]["price"]
+    if dr_hi <= dr_lo:
+        return "unknown"
+    pos = (float(setup["price"]) - dr_lo) / (dr_hi - dr_lo)
+    if pos < 0.3:
+        return "discount"
+    if pos > 0.7:
+        return "premium"
+    return "equilibrium"
 
 
 def _short_term_trend(full_df: pd.DataFrame, bar_idx: int, lookback: int = 60) -> str:
@@ -83,6 +102,7 @@ def simulate_setups(setups: list, full_df: pd.DataFrame, tf_label: str = "M5") -
     dict with keys: summary, trades, skipped_counts
     """
     sim = TradeSimulator()
+    setup_by_trade_id: dict[int, dict] = {}
 
     # Cooldown tracking — updated when a setup is SEEN (not when trade closes).
     # This fixes the bug where back-to-back setups during an open trade would
@@ -110,7 +130,15 @@ def simulate_setups(setups: list, full_df: pd.DataFrame, tf_label: str = "M5") -
         "concurrent_open": 0,
         "no_confirmation": 0,
         "missing_core_confluence": 0,
+        "v6_skip_h1": 0,
+        "v6_skip_london_open": 0,
+        "v6_asian_scalp": 0,
+        "v6_atr_band": 0,
+        "v6_adx_band": 0,
+        "v6_score_low": 0,
+        "v6_dr_aligned": 0,
     }
+    v6 = getattr(config, "STRATEGY_V6_ENABLED", False)
 
     for setup in setups:
         # ── 0. Block if a trade is still open (one trade at a time) ──────────
@@ -118,13 +146,67 @@ def simulate_setups(setups: list, full_df: pd.DataFrame, tf_label: str = "M5") -
             skipped["concurrent_open"] += 1
             continue
 
-        is_swing = setup.get("is_swing", False)
-        is_scalp = setup.get("is_scalp", False)
-        setup_mode = "SWING" if is_swing else ("SCALP" if is_scalp else None)
+        is_swing    = setup.get("is_swing", False)
+        is_scalp    = setup.get("is_scalp", False)
+        is_momentum = setup.get("is_momentum", False) and v6
+        # Priority: SWING > MOMENTUM > SCALP.  Same bar can qualify multiple
+        # ways; we take the highest-grade label so sizing/TP rules are right.
+        if is_swing:
+            setup_mode = "SWING"
+        elif is_momentum:
+            setup_mode = "MOMENTUM"
+        elif is_scalp:
+            setup_mode = "SCALP"
+        else:
+            setup_mode = None
 
         if not setup_mode:
             skipped["no_mode"] += 1
             continue
+
+        # ── V6 pre-filters (see config.V6_*) ───────────────────────────────
+        if v6:
+            if (config.V6_SKIP_H1_PRIMARY
+                    and setup.get("primary_tf") == "H1"):
+                skipped["v6_skip_h1"] += 1
+                continue
+
+            kz_name = setup.get("session", {}).get("killzone_name") or ""
+            if config.V6_SKIP_LONDON_OPEN and kz_name == "London Open":
+                skipped["v6_skip_london_open"] += 1
+                continue
+            if (setup_mode == "SCALP"
+                    and config.V6_SKIP_ASIAN_SCALP
+                    and kz_name == "Asian Session"):
+                skipped["v6_asian_scalp"] += 1
+                continue
+
+            atr_v6 = float(setup.get("atr", 0.0) or 0.0)
+            if any(lo <= atr_v6 < hi for (lo, hi) in config.V6_SKIP_ATR_BANDS):
+                skipped["v6_atr_band"] += 1
+                continue
+
+            adx_v6 = float(setup.get("adx", 0.0) or 0.0)
+            band_lo, band_hi = config.V6_SKIP_ADX_BAND
+            if band_lo <= adx_v6 < band_hi:
+                skipped["v6_adx_band"] += 1
+                continue
+
+            # Momentum bypasses the score floor — it's defined by structure + regime.
+            if setup_mode == "SWING":
+                if float(setup.get("swing_score", 0.0)) < config.V6_SWING_SCORE_MIN:
+                    skipped["v6_score_low"] += 1
+                    continue
+
+            dr_zone = _setup_dr_zone(setup)
+            if config.V6_SKIP_DR_ALIGNED:
+                is_long_dir = "bullish" in setup.get("direction", "")
+                if (is_long_dir and dr_zone == "discount") or \
+                   ((not is_long_dir) and dr_zone == "premium"):
+                    skipped["v6_dr_aligned"] += 1
+                    continue
+        else:
+            dr_zone = None
 
         # ── 1. ATR sanity — skip low-vol AND extreme-volatility sessions ───────
         atr = setup.get("atr", 15.0) or 15.0
@@ -140,6 +222,11 @@ def simulate_setups(setups: list, full_df: pd.DataFrame, tf_label: str = "M5") -
         if setup_mode == "SCALP" and atr > config.SCALP_ATR_GATE:
             skipped["atr_abnormal"] += 1
             continue
+        # Momentum requires high ATR by definition; re-check in case setup was
+        # tagged from a different source
+        if setup_mode == "MOMENTUM" and atr < config.V6_MOMENTUM_MIN_ATR:
+            skipped["atr_abnormal"] += 1
+            continue
 
         # ── 2. Score quality gates ───────────────────────────────────────────
         raw = setup.get("raw_score", {})
@@ -151,6 +238,10 @@ def simulate_setups(setups: list, full_df: pd.DataFrame, tf_label: str = "M5") -
             if not scalp_valid_flag or float(scalp_score) < config.SCALP_RISK.get("score_min", 3.0):
                 skipped["scalp_low_score"] += 1
                 continue
+        elif setup_mode == "MOMENTUM":
+            # Momentum bypasses the sweep requirement but still needs H1 BOS +
+            # M15 FVG (checked upstream in walk_forward_engine).  No score gate.
+            pass
         else:  # SWING
             swing_score = float(setup.get("swing_score", 0))
             if swing_score < config.SWING_SCORE_MIN_BACKTEST:
@@ -194,7 +285,9 @@ def simulate_setups(setups: list, full_df: pd.DataFrame, tf_label: str = "M5") -
                 continue
 
         # ── 5. Mode cooldown (update on SEEN, not on close) ─────────────────
-        if setup_mode == "SWING":
+        # MOMENTUM shares the swing cooldown bucket — both are HTF structural
+        # trades and clustering them would concentrate risk on one move.
+        if setup_mode in ("SWING", "MOMENTUM"):
             if setup_ts - last_swing_ts < config.SWING_COOLDOWN_SECONDS:
                 skipped["cooldown"] += 1
                 continue
@@ -203,9 +296,7 @@ def simulate_setups(setups: list, full_df: pd.DataFrame, tf_label: str = "M5") -
                 skipped["cooldown"] += 1
                 continue
 
-        # Stamp the timestamp NOW — even if later filters block, the cooldown
-        # window has started. This is the fix for back-to-back cluster losses.
-        if setup_mode == "SWING":
+        if setup_mode in ("SWING", "MOMENTUM"):
             last_swing_ts = setup_ts
         else:
             last_scalp_ts = setup_ts
@@ -245,7 +336,7 @@ def simulate_setups(setups: list, full_df: pd.DataFrame, tf_label: str = "M5") -
         h1_highs = levels.get("swing_highs_h1", [])
         h1_lows  = levels.get("swing_lows_h1", [])
 
-        if setup_mode == "SWING":
+        if setup_mode in ("SWING", "MOMENTUM"):
             rp       = config.SWING_RISK
             tp_rr    = rp.get("tp_rr", 2.5)
             # Floor = 0.75×ATR — outside routine H1 noise without over-sizing the stop
@@ -275,6 +366,14 @@ def simulate_setups(setups: list, full_df: pd.DataFrame, tf_label: str = "M5") -
         lots_raw = risk_budget / (sl_dist * 100)
         lots     = min(math.ceil(lots_raw * 100) / 100, mode_max)
         lots     = max(lots, 0.01)
+
+        # V6 Power Sizing: score + ATR + DR equilibrium triple-filter slice
+        # earns permission to size up (see config.V6_POWER_*).
+        if v6 and setup_mode in ("SWING", "MOMENTUM"):
+            if (float(setup.get("swing_score", 0.0)) >= config.V6_POWER_MIN_SCORE
+                    and atr >= config.V6_POWER_MIN_ATR
+                    and dr_zone in config.V6_POWER_DR_ZONES):
+                lots = min(config.V6_POWER_LOTS, mode_max)
 
         # Step down one tick if ceiling pushed us over the daily cap
         if sl_dist * lots * 100 > config.DAILY_LOSS_HARD_CAP:
@@ -325,6 +424,8 @@ def simulate_setups(setups: list, full_df: pd.DataFrame, tf_label: str = "M5") -
             risk_factors=f"Score:{setup.get('swing_score', 0.0) if setup_mode == 'SWING' else 3.0}",
             timeframe=tf_label # I need to capture tf_label in simulate_setups scope
         )
+        if sim.open_trades:
+            setup_by_trade_id[sim.open_trades[-1].id] = setup
 
         # ── Walk forward until trade closes ──────────────────────────────────
         trades_before = len(sim.closed_trades)
@@ -348,10 +449,14 @@ def simulate_setups(setups: list, full_df: pd.DataFrame, tf_label: str = "M5") -
     summary = sim.get_summary()
     total_pnl_float = sum(t.pnl for t in sim.closed_trades)
 
-    # Derive weeks from the actual date range of closed trades
+    # Derive weeks from actual min/max across all closed trade timestamps.
+    # trades may close out of entry-order once we have MOMENTUM setups that
+    # run alongside swings; min/max is more robust than first/last.
     if sim.closed_trades:
-        first_dt = pd.to_datetime(sim.closed_trades[0].entry_time)
-        last_dt  = pd.to_datetime(sim.closed_trades[-1].exit_time or sim.closed_trades[-1].entry_time)
+        entry_series = pd.to_datetime([t.entry_time for t in sim.closed_trades])
+        exit_series  = pd.to_datetime([t.exit_time or t.entry_time for t in sim.closed_trades])
+        first_dt = entry_series.min()
+        last_dt  = exit_series.max()
         weeks = max((last_dt - first_dt).days / 7.0, 1.0)
     else:
         weeks = 1.0
@@ -367,4 +472,5 @@ def simulate_setups(setups: list, full_df: pd.DataFrame, tf_label: str = "M5") -
         "trades": sim.closed_trades,
         "skipped": skipped,
         "weekly_avg": f"${total_pnl_float / weeks:.2f}",
+        "setup_by_trade_id": setup_by_trade_id,
     }
