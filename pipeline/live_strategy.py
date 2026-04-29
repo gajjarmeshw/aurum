@@ -491,6 +491,12 @@ class LiveStrategyRunner:
                         gate_ok = False
                         logger.debug("[Live] V6: skipped Asian scalp")
 
+                    # Skip Asian swings (00:00-13:00 IST = minute 0-780)
+                    if gate_ok and is_swing and getattr(config, "V6_SKIP_ASIAN_SWING", True):
+                        if bar_ts.hour * 60 + bar_ts.minute < 13 * 60:
+                            gate_ok = False
+                            logger.debug("[Live] V6: skipped Asian swing")
+
                     # ATR band filter
                     if gate_ok and any(lo <= atr < hi for lo, hi in config.V6_SKIP_ATR_BANDS):
                         gate_ok = False
