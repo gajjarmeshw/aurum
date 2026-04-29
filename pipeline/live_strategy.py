@@ -36,6 +36,7 @@ from backtest.engine_v7 import (
     _enrich_ist, _daily_opens, _scan_asw, _fvg_entry,
     MAX_RISK_PER_TRADE, COMMISSION_PER_001_LOT, NY_START, NY_END, _size_lots,
 )
+from backtest.simulation_core import check_v6_filters
 
 logger = logging.getLogger(__name__)
 
@@ -460,64 +461,22 @@ class LiveStrategyRunner:
                         gate_ok = False
                         logger.debug("[Live] Swing skipped — missing sweep or FVG/OB")
 
-                # Gate H: V6 filters — mirror simulation_core exactly for live/backtest parity
+                # Gate H: V6 filters — shared with simulation_core for guaranteed parity
                 if gate_ok and config.STRATEGY_V6_ENABLED:
-                    adx        = indicators.adx        if indicators else 0.0
-                    dr_zone    = ""
-                    if indicators:
-                        try:
-                            from core.dealing_range import compute_dealing_range
-                            dr = compute_dealing_range(
-                                indicators.swing_highs_h4, indicators.swing_lows_h4
-                            )
-                            dr_zone = dr.zone if dr.is_valid else ""
-                        except Exception:
-                            pass
-                    kz_name    = confluence.get("session_label", "")
-                    swing_score = float(confluence.get("swing", {}).get("score", 0.0))
-
-                    # Skip H1 primary (only M15 entries)
-                    if config.V6_SKIP_H1_PRIMARY and ict.get("timeframe") == "H1":
+                    setup_dict = {
+                        "primary_tf":   ict.get("timeframe", "M15"),
+                        "session":      {"killzone_name": confluence.get("session_label", "")},
+                        "atr":          atr,
+                        "adx":          indicators.adx if indicators else 0.0,
+                        "swing_score":  float(confluence.get("swing", {}).get("score", 0.0)),
+                        "entry_time":   bar_ts.isoformat(),
+                        "direction":    ict.get("direction", "neutral"),
+                        "levels":       indicators.to_dict() if indicators else {},
+                    }
+                    skip_reason = check_v6_filters(setup_dict, "SWING" if is_swing else "SCALP")
+                    if skip_reason:
                         gate_ok = False
-                        logger.debug("[Live] V6: skipped H1 primary")
-
-                    # Skip London Open killzone
-                    if gate_ok and config.V6_SKIP_LONDON_OPEN and "London Open" in kz_name:
-                        gate_ok = False
-                        logger.debug("[Live] V6: skipped London Open")
-
-                    # Skip Asian scalps
-                    if gate_ok and not is_swing and config.V6_SKIP_ASIAN_SCALP and "Asian" in kz_name:
-                        gate_ok = False
-                        logger.debug("[Live] V6: skipped Asian scalp")
-
-                    # Skip Asian swings (00:00-13:00 IST = minute 0-780)
-                    if gate_ok and is_swing and getattr(config, "V6_SKIP_ASIAN_SWING", True):
-                        if bar_ts.hour * 60 + bar_ts.minute < 13 * 60:
-                            gate_ok = False
-                            logger.debug("[Live] V6: skipped Asian swing")
-
-                    # ATR band filter
-                    if gate_ok and any(lo <= atr < hi for lo, hi in config.V6_SKIP_ATR_BANDS):
-                        gate_ok = False
-                        logger.debug(f"[Live] V6: ATR {atr:.1f} in skip band")
-
-                    # ADX band filter
-                    if gate_ok:
-                        band_lo, band_hi = config.V6_SKIP_ADX_BAND
-                        if band_lo <= adx < band_hi:
-                            gate_ok = False
-                            logger.debug(f"[Live] V6: ADX {adx:.1f} in skip band")
-
-                    # Swing score minimum
-                    if gate_ok and is_swing and swing_score < config.V6_SWING_SCORE_MIN:
-                        gate_ok = False
-                        logger.debug(f"[Live] V6: swing score {swing_score} < {config.V6_SWING_SCORE_MIN}")
-
-                    # DR aligned filter
-                    if gate_ok and config.V6_SKIP_DR_ALIGNED and dr_zone == "aligned":
-                        gate_ok = False
-                        logger.debug("[Live] V6: skipped DR aligned")
+                        logger.debug(f"[Live] V6: {skip_reason}")
 
                 if gate_ok:
                     # Stamp cooldown on SEEN (same as simulation_core)

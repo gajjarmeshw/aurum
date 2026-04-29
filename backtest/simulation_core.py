@@ -33,6 +33,55 @@ from backtest.trade_simulator import TradeSimulator
 logger = logging.getLogger(__name__)
 
 
+def check_v6_filters(setup: dict, setup_mode: str) -> str | None:
+    """
+    Single source of truth for V6 pre-filters.
+    Returns a skip reason string if the setup should be skipped, else None.
+    Used by both simulation_core (backtest) and live_strategy (live).
+    """
+    if not config.STRATEGY_V6_ENABLED:
+        return None
+
+    if config.V6_SKIP_H1_PRIMARY and setup.get("primary_tf") == "H1":
+        return "v6_skip_h1"
+
+    kz_name = setup.get("session", {}).get("killzone_name") or setup.get("kz_name", "")
+    if config.V6_SKIP_LONDON_OPEN and kz_name == "London Open":
+        return "v6_skip_london_open"
+
+    if setup_mode == "SCALP" and config.V6_SKIP_ASIAN_SCALP and kz_name == "Asian Session":
+        return "v6_asian_scalp"
+
+    # Block Asian swings (00:00-13:00 IST)
+    if setup_mode == "SWING" and getattr(config, "V6_SKIP_ASIAN_SWING", True):
+        entry_ts = setup.get("entry_time")
+        if entry_ts:
+            ts_ist = pd.Timestamp(entry_ts).tz_convert(config.IST) if hasattr(pd.Timestamp(entry_ts), "tz_convert") \
+                     else pd.Timestamp(entry_ts, tz="UTC").tz_convert(config.IST)
+            if ts_ist.hour * 60 + ts_ist.minute < 13 * 60:
+                return "v6_asian_swing"
+
+    atr_v6 = float(setup.get("atr", 0.0) or 0.0)
+    if any(lo <= atr_v6 < hi for (lo, hi) in config.V6_SKIP_ATR_BANDS):
+        return "v6_atr_band"
+
+    adx_v6 = float(setup.get("adx", 0.0) or 0.0)
+    band_lo, band_hi = config.V6_SKIP_ADX_BAND
+    if band_lo <= adx_v6 < band_hi:
+        return "v6_adx_band"
+
+    if setup_mode == "SWING" and float(setup.get("swing_score", 0.0)) < config.V6_SWING_SCORE_MIN:
+        return "v6_score_low"
+
+    if config.V6_SKIP_DR_ALIGNED:
+        dr_zone = _setup_dr_zone(setup)
+        is_long_dir = "bullish" in setup.get("direction", "")
+        if (is_long_dir and dr_zone == "discount") or (not is_long_dir and dr_zone == "premium"):
+            return "v6_dr_aligned"
+
+    return None
+
+
 def _bar_date(ts_or_str) -> str:
     """Return YYYY-MM-DD string from a unix timestamp or datetime string."""
     if isinstance(ts_or_str, (int, float)):
@@ -164,60 +213,12 @@ def simulate_setups(setups: list, full_df: pd.DataFrame, tf_label: str = "M5") -
             skipped["no_mode"] += 1
             continue
 
-        # ── V6 pre-filters (see config.V6_*) ───────────────────────────────
+        # ── V6 pre-filters — single source of truth via check_v6_filters() ──
         if v6:
-            if (config.V6_SKIP_H1_PRIMARY
-                    and setup.get("primary_tf") == "H1"):
-                skipped["v6_skip_h1"] += 1
+            skip_reason = check_v6_filters(setup, setup_mode)
+            if skip_reason:
+                skipped[skip_reason] = skipped.get(skip_reason, 0) + 1
                 continue
-
-            kz_name = setup.get("session", {}).get("killzone_name") or ""
-            if config.V6_SKIP_LONDON_OPEN and kz_name == "London Open":
-                skipped["v6_skip_london_open"] += 1
-                continue
-            if (setup_mode == "SCALP"
-                    and config.V6_SKIP_ASIAN_SCALP
-                    and kz_name == "Asian Session"):
-                skipped["v6_asian_scalp"] += 1
-                continue
-
-            # Skip Asian swings (00:00-13:00 IST)
-            if (setup_mode == "SWING"
-                    and getattr(config, "V6_SKIP_ASIAN_SWING", True)):
-                entry_ts = setup.get("entry_time")
-                if entry_ts:
-                    import pandas as pd
-                    IST = config.IST
-                    ts_ist = pd.Timestamp(entry_ts).tz_convert(IST) if hasattr(entry_ts, "tz_convert") \
-                             else pd.Timestamp(entry_ts, tz="UTC").tz_convert(IST)
-                    if ts_ist.hour * 60 + ts_ist.minute < 13 * 60:
-                        skipped["v6_asian_swing"] = skipped.get("v6_asian_swing", 0) + 1
-                        continue
-
-            atr_v6 = float(setup.get("atr", 0.0) or 0.0)
-            if any(lo <= atr_v6 < hi for (lo, hi) in config.V6_SKIP_ATR_BANDS):
-                skipped["v6_atr_band"] += 1
-                continue
-
-            adx_v6 = float(setup.get("adx", 0.0) or 0.0)
-            band_lo, band_hi = config.V6_SKIP_ADX_BAND
-            if band_lo <= adx_v6 < band_hi:
-                skipped["v6_adx_band"] += 1
-                continue
-
-            # Momentum bypasses the score floor — it's defined by structure + regime.
-            if setup_mode == "SWING":
-                if float(setup.get("swing_score", 0.0)) < config.V6_SWING_SCORE_MIN:
-                    skipped["v6_score_low"] += 1
-                    continue
-
-            dr_zone = _setup_dr_zone(setup)
-            if config.V6_SKIP_DR_ALIGNED:
-                is_long_dir = "bullish" in setup.get("direction", "")
-                if (is_long_dir and dr_zone == "discount") or \
-                   ((not is_long_dir) and dr_zone == "premium"):
-                    skipped["v6_dr_aligned"] += 1
-                    continue
         else:
             dr_zone = None
 
