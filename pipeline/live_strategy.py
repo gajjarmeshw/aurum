@@ -174,7 +174,7 @@ class LiveStrategyRunner:
             return None
 
         displacement = float(row["close"]) - do
-        if abs(displacement) < 30.0:
+        if abs(displacement) < 20.0:
             return None
 
         is_short = displacement > 0 and row["close"] < prev["close"] and row["close"] < row["open"]

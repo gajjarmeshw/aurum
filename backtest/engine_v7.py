@@ -222,7 +222,7 @@ def _scan_dor(m5: pd.DataFrame, m1: pd.DataFrame | None = None) -> list[dict]:
             continue
 
         displacement = row["close"] - do
-        if abs(displacement) < 30.0:
+        if abs(displacement) < 20.0:
             continue
 
         # Short fade: price ≥ do+30 and current bar closes red

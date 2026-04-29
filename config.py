@@ -69,9 +69,9 @@ def get_ist_now():
 
 # Mode 1: SWING MODE (5 factors, Max: 6.5 pts)
 # Volatility Regime Filters (Applied in simulation_core.py)
-ATR_NORMAL_MAX = 35.0  # Raised from 25 to capture normal weeks while filtering extreme 40+ outliers
+ATR_NORMAL_MAX = 80.0  # Raised to cover high-volatility gold regime (April 2026: ATR 40-80+)
 ATR_SWING_MIN  = 12.0  # Regime gate — below 12pt H1 ATR, Gold sweeps are range noise not ICT structure
-SCALP_ATR_GATE = 22.0  # Raised from 15 to allow scalps in normal 16-21 ATR regimes
+SCALP_ATR_GATE = 40.0  # Raised to allow scalps in high ATR regime
 
 SWING_WEIGHTS = {
     "liquidity_sweep":     2.0,  # Must have
@@ -121,7 +121,7 @@ V6_SKIP_H1_PRIMARY    = True
 V6_SKIP_LONDON_OPEN   = True
 V6_SKIP_ASIAN_SCALP   = True
 V6_SWING_SCORE_MIN    = 5.5
-V6_SKIP_ATR_BANDS     = [(0.0, 16.0), (20.0, 25.0)]
+V6_SKIP_ATR_BANDS     = [(0.0, 14.0)]  # Only skip extreme low-vol; ATR_SWING_MIN handles the rest
 V6_SKIP_ADX_BAND      = (25.0, 30.0)
 V6_SKIP_DR_ALIGNED    = True
 
