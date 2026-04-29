@@ -45,7 +45,7 @@ def check_v6_filters(setup: dict, setup_mode: str) -> str | None:
     if config.V6_SKIP_H1_PRIMARY and setup.get("primary_tf") == "H1":
         return "v6_skip_h1"
 
-    kz_name = setup.get("session", {}).get("killzone_name") or setup.get("kz_name", "")
+    kz_name = (setup.get("session") or {}).get("killzone_name") or setup.get("kz_name", "")
     if config.V6_SKIP_LONDON_OPEN and kz_name == "London Open":
         return "v6_skip_london_open"
 
@@ -54,10 +54,13 @@ def check_v6_filters(setup: dict, setup_mode: str) -> str | None:
 
     # Block Asian swings (00:00-13:00 IST)
     if setup_mode == "SWING" and getattr(config, "V6_SKIP_ASIAN_SWING", True):
-        entry_ts = setup.get("entry_time")
-        if entry_ts:
-            ts_ist = pd.Timestamp(entry_ts).tz_convert(config.IST) if hasattr(pd.Timestamp(entry_ts), "tz_convert") \
-                     else pd.Timestamp(entry_ts, tz="UTC").tz_convert(config.IST)
+        raw_ts = setup.get("entry_time") or setup.get("timestamp")
+        if raw_ts is not None:
+            if isinstance(raw_ts, (int, float)):
+                ts_ist = pd.Timestamp(raw_ts, unit="s", tz="UTC").tz_convert(config.IST)
+            else:
+                ts = pd.Timestamp(raw_ts)
+                ts_ist = ts.tz_convert(config.IST) if ts.tzinfo else ts.tz_localize("UTC").tz_convert(config.IST)
             if ts_ist.hour * 60 + ts_ist.minute < 13 * 60:
                 return "v6_asian_swing"
 
