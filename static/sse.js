@@ -96,7 +96,7 @@ function runAutoBacktest() {
     fetch('/api/backtest/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ timeframe: tf, start_date: startDate, end_date: endDate })
+        body: JSON.stringify({ timeframe: tf, start_date: startDate, end_date: endDate, strategy: 'dor_asw' })
     })
     .then(r => r.json())
     .then(data => {

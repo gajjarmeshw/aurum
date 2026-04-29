@@ -260,7 +260,7 @@ def create_app(event_bus: EventBus) -> Flask:
 
     @app.route("/api/backtest/run", methods=["POST"])
     def run_backtest():
-        """Trigger a backtest using the ICT walk-forward engine."""
+        """Trigger a backtest — DOR+ASW (primary) or ICT walk-forward engine."""
         from backtest.walk_forward_engine import BacktestEngine, run_all_timeframes
         from backtest.simulation_core import simulate_setups
 
@@ -268,16 +268,74 @@ def create_app(event_bus: EventBus) -> Flask:
         tf         = data.get("timeframe", "15min")
         start_date = data.get("start_date")
         end_date   = data.get("end_date")
+        strategy   = data.get("strategy", "dor_asw")
         data_dir   = str(config.BASE_DIR / "backtest" / "data")
 
-        if tf == "all":
-            # ── All-TF combined mode ──────────────────────────────────────
-            setups, engines = run_all_timeframes(data_dir, start_date, end_date)
-            if not setups:
-                return jsonify({"error": "No setups found. Fetch data first."}), 404
-            # Use M15 full_df for simulation (has highest bar density for MT entry checks)
-            primary_engine = engines.get("15min") or next(iter(engines.values()))
-            result = simulate_setups(setups, primary_engine.full_df, tf_label="M15+H1")
+        # ── DOR+ASW (primary live engine) ─────────────────────────────────
+        if strategy == "dor_asw" or tf == "all":
+            from backtest.engine_v7 import (
+                _load_csv, _enrich_ist, _load_m1, _scan_dor, _scan_asw,
+                simulate, _summary,
+            )
+            import pandas as _pd2
+            m5 = _load_csv(str(config.BASE_DIR / "backtest" / "data" / "XAUUSD_5min.csv"))
+            if start_date:
+                s_ts = _pd2.Timestamp(start_date, tz="UTC")
+                e_ts = _pd2.Timestamp(end_date, tz="UTC") + _pd2.Timedelta(days=1)
+                m5 = m5[(m5["datetime"] >= s_ts) & (m5["datetime"] < e_ts)].reset_index(drop=True)
+            m5 = _enrich_ist(m5)
+            m1 = _load_m1(config.BASE_DIR / "backtest" / "data")
+            if m1 is not None and start_date:
+                m1 = m1[(m1["datetime"] >= s_ts) & (m1["datetime"] < e_ts)].reset_index(drop=True)
+            setups  = _scan_dor(m5, m1) + _scan_asw(m5)
+            sim_bars = m1 if m1 is not None else m5
+            trades  = simulate(sim_bars, setups)
+            summ    = _summary(trades)
+
+            # Build result dict in the same shape as simulate_setups
+            IST = config.IST
+            trade_objs = []
+            for t in trades:
+                entry_ist = _pd2.Timestamp(t.entry_time).tz_convert(IST)
+                exit_ist  = _pd2.Timestamp(t.exit_time).tz_convert(IST) if t.exit_time else None
+                class _T: pass
+                obj = _T()
+                obj.entry_time   = entry_ist.isoformat()
+                obj.entry_price  = round(t.entry_price, 2)
+                obj.direction    = t.direction
+                obj.session      = "London/NY"
+                obj.score        = 0
+                obj.grade        = t.engine
+                obj.result       = t.result.lower()
+                obj.pnl          = round(t.pnl, 2)
+                obj.exit_price   = round(t.exit_price, 2) if t.exit_price else ""
+                obj.exit_time    = exit_ist.isoformat() if exit_ist else ""
+                obj.setup_reason = f"{t.engine} Signal"
+                obj.exit_reason  = t.reason
+                obj.risk_factors = f"R: {round(abs(t.tp - t.entry_price) / abs(t.entry_price - t.sl), 1)}R"
+                obj.timeframe    = "M5"
+                trade_objs.append(obj)
+
+            wins   = sum(1 for t in trades if t.result == "win")
+            losses = sum(1 for t in trades if t.result == "loss")
+            total_pnl = sum(t.pnl for t in trades)
+            wr = f"{wins / len(trades) * 100:.1f}%" if trades else "0%"
+            weeks = max(summ.get("weeks", 1), 1)
+            summary = {
+                "wins": wins, "losses": losses,
+                "win_rate": wr,
+                "total_pnl": f"${total_pnl:.2f}",
+            }
+            save_backtest_results(trade_objs, filename="latest_backtest.csv")
+            return jsonify({
+                "success":          True,
+                "setups_found":     len(trade_objs),
+                "trades_simulated": len(trade_objs),
+                "summary":          summary,
+                "weekly_avg":       f"${total_pnl / weeks:.2f}",
+                "msg": f"DOR+ASW: {len(trade_objs)} trades | {wr} WR | ${total_pnl:.2f}",
+            })
+
         elif data.get("strategy") == "session_expansion":
             data_path = config.BASE_DIR / "backtest" / "data" / f"XAUUSD_{tf}.csv"
             if not data_path.exists():
