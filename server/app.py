@@ -463,11 +463,12 @@ def create_app(event_bus: EventBus) -> Flask:
     def refresh_backtest_data():
         """Manually trigger historical data fetch for all timeframes."""
         try:
-            # Fetch core timeframes required for backtesting
+            fetch_historical_data("XAU/USD", "1min",  500)   # M1 — DOR FVG refinement
+            fetch_historical_data("XAU/USD", "5min",  5000)  # M5 — DOR+ASW primary
             fetch_historical_data("XAU/USD", "15min", 5000)
-            fetch_historical_data("XAU/USD", "1h", 5000)
-            fetch_historical_data("XAU/USD", "4h", 2000)
-            return jsonify({"success": True, "message": "Historical data refreshed successfully."})
+            fetch_historical_data("XAU/USD", "1h",    5000)
+            fetch_historical_data("XAU/USD", "4h",    2000)
+            return jsonify({"success": True, "message": "All timeframes refreshed (M1/M5/M15/H1/H4)."})
         except Exception as e:
             logger.error(f"Data refresh failed: {e}")
             return jsonify({"success": False, "error": str(e)}), 500
