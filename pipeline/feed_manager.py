@@ -152,6 +152,44 @@ class FeedManager:
                 "ob":  indicators.obs_m15[-1].to_dict()  if indicators.obs_m15  else None,
             }
 
+            # DOR+ASW context for terminal display
+            daily_open = None
+            displacement = None
+            try:
+                from backtest.engine_v7 import _enrich_ist, _daily_opens
+                import pandas as pd
+                m5_raw = self.feed.get_all_candles("M5")
+                if m5_raw:
+                    m5_tmp = pd.DataFrame(m5_raw)
+                    m5_tmp["datetime"] = pd.to_datetime(m5_tmp["timestamp"], unit="s", utc=True)
+                    m5_tmp = _enrich_ist(m5_tmp)
+                    opens = _daily_opens(m5_tmp)
+                    today_ist = ist_now.strftime("%Y-%m-%d")
+                    daily_open = opens.get(today_ist)
+                    if daily_open:
+                        displacement = round(current_price - daily_open, 1)
+            except Exception:
+                pass
+
+            ls_start, ls_end = 15 * 60, 18 * 60
+            ny_start, ny_end = 18 * 60 + 30, 21 * 60 + 30
+            cur_min = ist_now.hour * 60 + ist_now.minute
+            in_london = ls_start <= cur_min < ls_end
+            in_ny     = ny_start <= cur_min < ny_end
+            dor_window = "London" if in_london else ("NY" if in_ny else "—")
+
+            if displacement is not None:
+                disp_str  = f"{displacement:+.1f}pt"
+                threshold = 20.0
+                if abs(displacement) >= threshold and (in_london or in_ny):
+                    dor_status = f"⚡ DOR WATCH {disp_str} from DO ${daily_open:.2f}"
+                elif abs(displacement) >= threshold:
+                    dor_status = f"🕐 Displaced {disp_str} — awaiting London/NY window"
+                else:
+                    dor_status = f"↔ {disp_str} from DO ${daily_open:.2f} — need ≥20pt"
+            else:
+                dor_status = "Scanning..."
+
             scan_entry = {
                 "timestamp":    ist_now.isoformat(),
                 "time_ist":     ist_now.strftime("%H:%M:%S"),
@@ -160,11 +198,21 @@ class FeedManager:
                 "dr":           dr_dict,
                 "levels":       levels,
                 "price":        round(current_price, 2),
-                "setup_status": ict_dict.get("setup_status", "Scanning..."),
+                "setup_status": dor_status,
+                "dor_window":   dor_window,
+                "daily_open":   round(daily_open, 2) if daily_open else None,
+                "displacement":  displacement,
             }
             self._strategy_history.insert(0, scan_entry)
             if len(self._strategy_history) > 20:
                 self._strategy_history.pop()
+
+            self.event_bus.publish("dor_status", {
+                "daily_open":   round(daily_open, 2) if daily_open else None,
+                "displacement": displacement,
+                "dor_window":   dor_window,
+                "in_window":    in_london or in_ny,
+            })
 
             confluence["direction"]       = ict_dict.get("direction", "neutral")
             confluence["atr_h1"]          = round(indicators.atr_h1, 2)

@@ -446,6 +446,7 @@ class GoldAnalystSSE {
         this.es.addEventListener('dealing_range_update', e => this.onDealingRange(JSON.parse(e.data)));
         this.es.addEventListener('live_trades',          e => this.onLiveTrades(JSON.parse(e.data)));
         this.es.addEventListener('account_update',       e => this.onAccountUpdate(JSON.parse(e.data)));
+        this.es.addEventListener('dor_status',           e => this.onDorStatus(JSON.parse(e.data)));
 
         this.es.onopen  = () => {
             this.setStatus(true);
@@ -710,22 +711,58 @@ class GoldAnalystSSE {
         }
 
         log.innerHTML = history.map(h => {
-            const swing = h.confluence && h.confluence.swing;
-            const score = swing ? (swing.score || 0) : (h.confluence && h.confluence.total || 0);
-            const maxScore = swing ? (swing.max_score || 6.5) : 6.5;
-            const isGlow = swing ? swing.is_valid : score >= 8;
+            const disp = h.displacement;
+            const inWindow = h.dor_window && h.dor_window !== '—';
+            const isAlert = disp !== null && disp !== undefined && Math.abs(disp) >= 20 && inWindow;
+            const dispStr = disp !== null && disp !== undefined ? `${disp > 0 ? '+' : ''}${disp}pt` : '';
             return `
                 <div class="history-item">
                     <div class="hist-main">
-                        <div class="hist-time">${h.time_ist} IST — $${h.price}</div>
+                        <div class="hist-time">${h.time_ist} IST — $${h.price} ${dispStr ? `<span style="color:${isAlert ? 'var(--c-gold)' : 'var(--c-text-3)'}; font-size:10px;">${dispStr}</span>` : ''}</div>
                         <div class="hist-setup">${h.setup_status || 'Scanning...'}</div>
                     </div>
-                    <div class="hist-pnl" style="color:${isGlow ? 'var(--bull)' : 'var(--t2)'}">
-                        ${score.toFixed(1)}/${maxScore}
+                    <div class="hist-pnl" style="color:${isAlert ? 'var(--c-gold)' : 'var(--c-text-3)'}; font-size:10px;">
+                        ${h.dor_window || '—'}
                     </div>
                 </div>
             `;
         }).join('');
+    }
+
+    onDorStatus(data) {
+        const disp    = data.displacement;
+        const doPrice = data.daily_open;
+        const window  = data.dor_window || '—';
+        const active  = data.in_window;
+        const ready   = disp !== null && disp !== undefined && Math.abs(disp) >= 20;
+
+        _setEl('dor-daily-open', doPrice ? `$${doPrice}` : '—');
+
+        const dispEl = document.getElementById('dor-displacement');
+        if (dispEl && disp !== null && disp !== undefined) {
+            dispEl.textContent = `${disp > 0 ? '+' : ''}${disp}pt`;
+            dispEl.style.color = ready ? (disp > 0 ? 'var(--c-red)' : 'var(--c-green)') : 'var(--c-text-2)';
+        }
+
+        const chip = document.getElementById('dor-window-chip');
+        if (chip) {
+            chip.textContent = active ? `🟢 ${window}` : window === '—' ? 'Off-Hours' : `⏳ ${window} Next`;
+            chip.className = 'chip ' + (active ? 'chip-green' : 'chip-dim');
+        }
+
+        // Highlight active window box
+        const lBox = document.getElementById('dor-london-box');
+        const nBox = document.getElementById('dor-ny-box');
+        if (lBox) lBox.style.borderColor = window === 'London' && active ? 'var(--c-gold)' : 'var(--c-border)';
+        if (nBox) nBox.style.borderColor = window === 'NY'     && active ? 'var(--c-gold)' : 'var(--c-border)';
+
+        const actionEl = document.getElementById('matrix-action-text');
+        if (actionEl) {
+            if (ready && active)        actionEl.textContent = `⚡ DOR WATCH — ${Math.abs(disp)}pt displaced, ${window} window ACTIVE`;
+            else if (ready && !active)  actionEl.textContent = `🕐 ${Math.abs(disp)}pt displaced — awaiting London (15:00) or NY (18:30) IST`;
+            else if (active)            actionEl.textContent = `📡 ${window} window active — watching for ≥20pt displacement`;
+            else                        actionEl.textContent = `_ SCANNING — next window: London 15:00 IST _`;
+        }
     }
 
     onHealth(data) {

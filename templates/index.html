@@ -60,30 +60,43 @@
   <!-- LEFT COL ──────────────────── -->
   <div class="col">
 
-    <!-- Strategy Matrix -->
+    <!-- DOR+ASW Status Panel -->
     <div class="card" id="strategy-matrix-card">
       <div class="card-header">
-        <span class="card-label">Institutional Strategy Matrix</span>
-        <div style="display:flex;align-items:center;gap:8px;">
-          <div class="mode-toggle">
-            <button id="btn-mode-swing" onclick="setUIMode('swing')" class="active-mode">SWING</button>
-            <button id="btn-mode-scalp" onclick="setUIMode('scalp')">SCALP</button>
-          </div>
-          <span class="chip chip-dim" id="matrix-status-chip">SCANNING</span>
-          <span class="chip chip-purple" id="matrix-tf-chip">M5/M15</span>
+        <span class="card-label">DOR+ASW Engine</span>
+        <span class="chip chip-purple" id="dor-window-chip">—</span>
+      </div>
+
+      <!-- Daily Open + Displacement -->
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;padding:12px 0 8px;">
+        <div style="text-align:center;">
+          <div style="font-size:9px;color:var(--c-text-3);letter-spacing:1px;">DAILY OPEN</div>
+          <div style="font-size:16px;font-weight:700;color:var(--c-gold);" id="dor-daily-open">—</div>
+        </div>
+        <div style="text-align:center;">
+          <div style="font-size:9px;color:var(--c-text-3);letter-spacing:1px;">DISPLACEMENT</div>
+          <div style="font-size:16px;font-weight:700;" id="dor-displacement">—</div>
+        </div>
+        <div style="text-align:center;">
+          <div style="font-size:9px;color:var(--c-text-3);letter-spacing:1px;">THRESHOLD</div>
+          <div style="font-size:16px;font-weight:700;color:var(--c-text-2);">≥20pt</div>
         </div>
       </div>
 
-      <div id="london-setup-alert" style="display:none;border:1px solid var(--a);color:var(--a);padding:6px 12px;font-size:10px;font-weight:700;letter-spacing:2px;text-align:center;margin-bottom:8px;font-family:'Space Mono',monospace;">
-        ⏰ LONDON SETUP FORMING
-      </div>
-
-      <div class="matrix-grid" id="matrix-body">
-        <div class="matrix-row-loading">_ INITIALIZING ICT ENGINE _</div>
+      <!-- DOR Window Status -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:4px 0 12px;">
+        <div id="dor-london-box" style="border:1px solid var(--c-border);border-radius:4px;padding:8px;text-align:center;">
+          <div style="font-size:9px;color:var(--c-text-3);">LONDON</div>
+          <div style="font-size:10px;font-weight:600;" id="dor-london-time">15:00–18:00 IST</div>
+        </div>
+        <div id="dor-ny-box" style="border:1px solid var(--c-border);border-radius:4px;padding:8px;text-align:center;">
+          <div style="font-size:9px;color:var(--c-text-3);">NEW YORK</div>
+          <div style="font-size:10px;font-weight:600;" id="dor-ny-time">18:30–21:30 IST</div>
+        </div>
       </div>
 
       <div class="matrix-footer">
-        <div id="matrix-action-text" class="action-bar">_ WAITING FOR SETUP _</div>
+        <div id="matrix-action-text" class="action-bar">_ INITIALIZING DOR ENGINE _</div>
       </div>
     </div>
 
