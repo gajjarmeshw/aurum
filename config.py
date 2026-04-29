@@ -115,7 +115,7 @@ SCALP_COOLDOWN_SECONDS = 15 * 60
 # ─── Strategy v6 — Data-Driven A+ filters ───────────────────
 # Empirically derived from the 6-month backtest (see backtest/analyze_winners.py);
 # each flag drops a segment with verified negative expectancy.
-STRATEGY_V6_ENABLED = True
+STRATEGY_V6_ENABLED = False  # ICT v6 disabled — no edge in high-vol regimes; DOR+ASW is the primary engine
 
 V6_SKIP_H1_PRIMARY    = True
 V6_SKIP_LONDON_OPEN   = True
