@@ -41,7 +41,7 @@ MAX_RISK_PER_TRADE      = 25.0          # USD — QTFunded $10k guardrail
 DAILY_LOSS_CAP          = 500.0
 DAILY_PROFIT_LOCK       = 500.0
 MAX_LOSSES_PER_DAY      = 2
-MAX_TRADES_PER_DAY      = 8
+MAX_TRADES_PER_DAY      = 3  # Max 3/day — 1 London + 1 NY + 1 margin for FVG refinement
 COMMISSION_PER_001_LOT  = 0.07          # OANDA spread/commission per 0.01 lot per side
 
 # Session windows (IST) — sourced from config.KILLZONES
