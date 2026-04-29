@@ -214,13 +214,12 @@ def simulate_setups(setups: list, full_df: pd.DataFrame, tf_label: str = "M5") -
             continue
 
         # ── V6 pre-filters — single source of truth via check_v6_filters() ──
+        dr_zone = _setup_dr_zone(setup) if v6 else None
         if v6:
             skip_reason = check_v6_filters(setup, setup_mode)
             if skip_reason:
                 skipped[skip_reason] = skipped.get(skip_reason, 0) + 1
                 continue
-        else:
-            dr_zone = None
 
         # ── 1. ATR sanity — skip low-vol AND extreme-volatility sessions ───────
         atr = setup.get("atr", 15.0) or 15.0
