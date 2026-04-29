@@ -181,6 +181,19 @@ def simulate_setups(setups: list, full_df: pd.DataFrame, tf_label: str = "M5") -
                 skipped["v6_asian_scalp"] += 1
                 continue
 
+            # Skip Asian swings (00:00-13:00 IST)
+            if (setup_mode == "SWING"
+                    and getattr(config, "V6_SKIP_ASIAN_SWING", True)):
+                entry_ts = setup.get("entry_time")
+                if entry_ts:
+                    import pandas as pd
+                    IST = config.IST
+                    ts_ist = pd.Timestamp(entry_ts).tz_convert(IST) if hasattr(entry_ts, "tz_convert") \
+                             else pd.Timestamp(entry_ts, tz="UTC").tz_convert(IST)
+                    if ts_ist.hour * 60 + ts_ist.minute < 13 * 60:
+                        skipped["v6_asian_swing"] = skipped.get("v6_asian_swing", 0) + 1
+                        continue
+
             atr_v6 = float(setup.get("atr", 0.0) or 0.0)
             if any(lo <= atr_v6 < hi for (lo, hi) in config.V6_SKIP_ATR_BANDS):
                 skipped["v6_atr_band"] += 1
