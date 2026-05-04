@@ -191,12 +191,41 @@ def _fvg_entry(m1: pd.DataFrame, t0: pd.Timestamp, is_short: bool,
     return None
 
 
-def _scan_dor(m5: pd.DataFrame, m1: pd.DataFrame | None = None) -> list[dict]:
+def _h4_trend(h4: pd.DataFrame | None, bar_time: pd.Timestamp) -> str:
+    """
+    Returns 'bullish', 'bearish', or 'neutral' based on H4 structure at bar_time.
+    Uses last 5 completed H4 bars before bar_time.
+    Bullish: 3+ of last 5 H4 closes are higher than the one before them.
+    Bearish: 3+ of last 5 H4 closes are lower than the one before them.
+    """
+    if h4 is None or h4.empty:
+        return "neutral"
+    prev = h4[h4["datetime"] < bar_time].tail(6)
+    if len(prev) < 4:
+        return "neutral"
+    closes = prev["close"].tolist()
+    ups   = sum(1 for i in range(1, len(closes)) if closes[i] > closes[i - 1])
+    downs = sum(1 for i in range(1, len(closes)) if closes[i] < closes[i - 1])
+    total = len(closes) - 1
+    if ups >= round(total * 0.6):
+        return "bullish"
+    if downs >= round(total * 0.6):
+        return "bearish"
+    return "neutral"
+
+
+DOR_MIN_DISPLACEMENT = 30.0   # pt — minimum displacement from daily open to trigger DOR
+
+
+def _scan_dor(m5: pd.DataFrame, m1: pd.DataFrame | None = None,
+              h4: pd.DataFrame | None = None) -> list[dict]:
     """
     Rules:
       - Fires during London Session (15:00-18:00 IST) or NY killzone
       - Price is ≥ 30pt displaced from daily open
       - Current M5 bar closes back toward daily open (reversal confirmation)
+      - H4 trend filter: only take long signals when H4 is bullish or neutral;
+        only take short signals when H4 is bearish or neutral.
       - If M1 data available: refine entry via M1 FVG within next 10 min
         (tighter SL → more lots → higher PnL per win, +$20/wk vs pure M5)
       - Fallback to M5 bar close entry when no M1 FVG forms
@@ -222,16 +251,20 @@ def _scan_dor(m5: pd.DataFrame, m1: pd.DataFrame | None = None) -> list[dict]:
             continue
 
         displacement = row["close"] - do
-        if abs(displacement) < 20.0:
+        if abs(displacement) < DOR_MIN_DISPLACEMENT:
             continue
 
-        # Short fade: price ≥ do+30 and current bar closes red
-        if displacement > 0 and row["close"] < prev["close"] and row["close"] < row["open"]:
+        h4_bias = _h4_trend(h4, row["datetime"])
+
+        # Short fade: price above DO, closes red toward DO — only if H4 is bearish/neutral
+        if displacement > 0 and row["close"] < prev["close"] and row["close"] < row["open"] \
+                and h4_bias != "bullish":
             if m1 is not None:
                 refined = _fvg_entry(m1, row["datetime"], is_short=True, do=do)
                 if refined:
                     setups.append({
                         "engine": "DOR", **refined,
+                        "displacement": displacement, "daily_open": do,
                         "reason": f"DOR short M1-FVG | +{displacement:.1f}pt above DO {do:.2f}",
                     })
                     continue
@@ -244,23 +277,27 @@ def _scan_dor(m5: pd.DataFrame, m1: pd.DataFrame | None = None) -> list[dict]:
             if tp >= entry:
                 continue
             setups.append({
-                "engine":     "DOR",
-                "entry_time": row["datetime"],
-                "direction":  "short",
-                "entry":      entry,
-                "sl":         sl,
-                "tp":         tp,
-                "reason":     f"DOR short | +{displacement:.1f}pt above DO {do:.2f}",
+                "engine":       "DOR",
+                "entry_time":   row["datetime"],
+                "direction":    "short",
+                "entry":        entry,
+                "sl":           sl,
+                "tp":           tp,
+                "displacement": displacement,
+                "daily_open":   do,
+                "reason":       f"DOR short | +{displacement:.1f}pt above DO {do:.2f}",
             })
             continue
 
-        # Long fade: price ≤ do-30 and current bar closes green
-        if displacement < 0 and row["close"] > prev["close"] and row["close"] > row["open"]:
+        # Long fade: price below DO, closes green toward DO — only if H4 is bullish/neutral
+        if displacement < 0 and row["close"] > prev["close"] and row["close"] > row["open"] \
+                and h4_bias != "bearish":
             if m1 is not None:
                 refined = _fvg_entry(m1, row["datetime"], is_short=False, do=do)
                 if refined:
                     setups.append({
                         "engine": "DOR", **refined,
+                        "displacement": displacement, "daily_open": do,
                         "reason": f"DOR long M1-FVG | {displacement:.1f}pt below DO {do:.2f}",
                     })
                     continue
@@ -273,13 +310,15 @@ def _scan_dor(m5: pd.DataFrame, m1: pd.DataFrame | None = None) -> list[dict]:
             if tp <= entry:
                 continue
             setups.append({
-                "engine":     "DOR",
-                "entry_time": row["datetime"],
-                "direction":  "long",
-                "entry":      entry,
-                "sl":         sl,
-                "tp":         tp,
-                "reason":     f"DOR long | {displacement:.1f}pt below DO {do:.2f}",
+                "engine":       "DOR",
+                "entry_time":   row["datetime"],
+                "direction":    "long",
+                "entry":        entry,
+                "sl":           sl,
+                "tp":           tp,
+                "displacement": displacement,
+                "daily_open":   do,
+                "reason":       f"DOR long | {displacement:.1f}pt below DO {do:.2f}",
             })
     return setups
 
@@ -555,8 +594,15 @@ def run(start_date: str, end_date: str, engines: list[str] | None = None,
     if m1 is not None:
         m1 = m1[(m1["datetime"] >= start_ts) & (m1["datetime"] < end_ts)].reset_index(drop=True)
 
+    h4_path = str(data_dir / "XAUUSD_4h.csv")
+    try:
+        h4 = _load_csv(h4_path)
+        # No date filter — _h4_trend looks back from each signal time
+    except Exception:
+        h4 = None
+
     setups: list[dict] = []
-    if "DOR" in engines: setups.extend(_scan_dor(m5, m1))
+    if "DOR" in engines: setups.extend(_scan_dor(m5, m1, h4))
     if "ASW" in engines: setups.extend(_scan_asw(m5))
 
     sim_bars = m1 if m1 is not None else m5

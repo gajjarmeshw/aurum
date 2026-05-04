@@ -228,9 +228,10 @@ class FeedManager:
             try:
                 m5_bars = self.feed.get_all_candles("M5")
                 m1_bars = self.feed.get_all_candles("M1")
+                h4_bars = self.feed.get_all_candles("H4")
                 self.live_strategy.on_m5_close(
                     m5_bars, confluence, ict_dict, self.event_bus, indicators,
-                    m1_bars=m1_bars,
+                    m1_bars=m1_bars, h4_bars=h4_bars,
                 )
             except Exception as e:
                 logger.error(f"Live strategy error: {e}", exc_info=True)

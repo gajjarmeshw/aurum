@@ -35,7 +35,7 @@ from journal import journal
 from backtest.engine_v7 import (
     _enrich_ist, _daily_opens, _scan_dor, _scan_asw,
     MAX_RISK_PER_TRADE, MAX_LOSSES_PER_DAY, MAX_TRADES_PER_DAY,
-    COMMISSION_PER_001_LOT, NY_START, NY_END, _size_lots,
+    NY_START, NY_END, _size_lots,
 )
 from backtest.simulation_core import check_v6_filters
 
@@ -74,10 +74,12 @@ class LiveStrategyRunner:
         try:
             if _STATE_FILE.exists():
                 state = json.loads(_STATE_FILE.read_text())
-                self._today       = state.get("today")
-                self._day_pnl     = state.get("day_pnl", 0.0)
-                self._day_losses  = state.get("day_losses", 0)
-                self._open_signals = state.get("open_signals", [])
+                self._today            = state.get("today")
+                self._day_pnl          = state.get("day_pnl", 0.0)
+                self._day_losses       = state.get("day_losses", 0)
+                self._day_trades       = state.get("day_trades", 0)
+                self._fired_setup_keys = set(state.get("fired_setup_keys", []))
+                self._open_signals     = state.get("open_signals", [])
                 logger.info(
                     f"[Live] Restored state: {len(self._open_signals)} open signal(s), "
                     f"day_pnl=${self._day_pnl:.2f}, losses={self._day_losses}"
@@ -98,10 +100,12 @@ class LiveStrategyRunner:
             signals_clean = [{k: v for k, v in s.items() if k != "indicators"}
                              for s in self._open_signals]
             state = {
-                "today":        self._today,
-                "day_pnl":      self._day_pnl,
-                "day_losses":   self._day_losses,
-                "open_signals": signals_clean,
+                "today":             self._today,
+                "day_pnl":           self._day_pnl,
+                "day_losses":        self._day_losses,
+                "day_trades":        self._day_trades,
+                "fired_setup_keys":  list(self._fired_setup_keys),
+                "open_signals":      signals_clean,
             }
             _STATE_FILE.write_text(json.dumps(state, indent=2))
         except Exception as e:
@@ -318,7 +322,8 @@ class LiveStrategyRunner:
         return sl_dist, sl, tp, lots
 
     def on_m5_close(self, m5_bars: list[dict], confluence: dict, ict: dict,  # noqa: PLR0912
-                    event_bus, indicators=None, m1_bars: list[dict] | None = None):
+                    event_bus, indicators=None, m1_bars: list[dict] | None = None,
+                    h4_bars: list[dict] | None = None):
         """
         Called once per M5 candle close.
         SL / TP / lot sizing mirrors simulation_core.py exactly.
@@ -491,43 +496,33 @@ class LiveStrategyRunner:
                 event_bus.publish("live_trades", self.get_live_trades_state())
 
         # ── 3. Track open signals: partial TP → BE, full TP, and SL hit ──────────
+        # Order matches backtest engine_v7: SL first, then TP, then 1R partial.
+        # Checking 1R before SL would optimistically award partial wins on bars
+        # that actually closed out at SL first.
         if self._open_signals:
             curr_high = last_bar["high"]
             curr_low  = last_bar["low"]
             to_remove = []
 
             for signal in self._open_signals:
-                is_long = "bullish" in signal["direction"]
-                tp_rr   = signal["tp_rr"]
+                is_long  = "bullish" in signal["direction"]
+                tp_rr    = signal["tp_rr"]
                 tp_price = (signal["entry"] + signal["sl_dist"] * tp_rr) if is_long \
                            else (signal["entry"] - signal["sl_dist"] * tp_rr)
+                hit_sl   = (is_long  and curr_low  <= signal["sl"]) or \
+                           (not is_long and curr_high >= signal["sl"])
+                hit_tp   = (is_long  and curr_high >= tp_price) or \
+                           (not is_long and curr_low  <= tp_price)
+                target_1r = (signal["entry"] + signal["sl_dist"]) if is_long \
+                            else (signal["entry"] - signal["sl_dist"])
+                hit_1r   = (is_long  and curr_high >= target_1r) or \
+                           (not is_long and curr_low  <= target_1r)
 
-                # A. Partial TP at 1R → SL to BE+0.5pt
-                if not signal["partial_hit"]:
-                    target_1r = (signal["entry"] + signal["sl_dist"]) if is_long \
-                                else (signal["entry"] - signal["sl_dist"])
-                    if (is_long and curr_high >= target_1r) or \
-                       (not is_long and curr_low <= target_1r):
-                        signal["partial_hit"] = True
-                        signal["be_moved"]    = True
-                        new_sl = signal["entry"] + (0.5 if is_long else -0.5)
-                        signal["sl"] = new_sl
-                        self._fire_partial_alert(signal, target_1r, new_sl, event_bus)
-
-                # B. Full TP hit (runner closes)
-                elif (is_long and curr_high >= tp_price) or \
-                     (not is_long and curr_low <= tp_price):
-                    pnl = signal["sl_dist"] * tp_rr * signal["lots"] * 100
-                    self._fire_tp_alert(signal, tp_price, pnl, event_bus)
-                    self._day_pnl += pnl
-                    to_remove.append(signal)
-
-                # C. SL hit
-                elif (is_long and curr_low <= signal["sl"]) or \
-                     (not is_long and curr_high >= signal["sl"]):
-                    # If partial already taken, runner stopped at BE — small win not a loss
+                # A. SL hit — checked first (matches backtest priority)
+                if hit_sl:
                     if signal["partial_hit"]:
-                        partial_pnl = signal["sl_dist"] * signal["lots"] * 100
+                        # Runner stopped at BE after partial was already taken
+                        partial_pnl = signal["sl_dist"] * 0.5 * signal["lots"] * 100
                         self._fire_be_exit_alert(signal, signal["sl"], partial_pnl, event_bus)
                         self._day_pnl += partial_pnl
                     else:
@@ -536,6 +531,28 @@ class LiveStrategyRunner:
                         self._day_pnl += loss
                         self._day_losses += 1
                     to_remove.append(signal)
+
+                # B. Full TP hit (runner closes, only after partial)
+                elif hit_tp and signal["partial_hit"]:
+                    pnl = signal["sl_dist"] * tp_rr * 0.5 * signal["lots"] * 100
+                    self._fire_tp_alert(signal, tp_price, pnl, event_bus)
+                    self._day_pnl += pnl
+                    to_remove.append(signal)
+
+                # C. Full TP before any partial (clean win)
+                elif hit_tp and not signal["partial_hit"]:
+                    pnl = signal["sl_dist"] * tp_rr * signal["lots"] * 100
+                    self._fire_tp_alert(signal, tp_price, pnl, event_bus)
+                    self._day_pnl += pnl
+                    to_remove.append(signal)
+
+                # D. 1R partial hit → move SL to BE+0.5pt
+                elif hit_1r and not signal["partial_hit"]:
+                    signal["partial_hit"] = True
+                    signal["be_moved"]    = True
+                    new_sl = signal["entry"] + (0.5 if is_long else -0.5)
+                    signal["sl"] = new_sl
+                    self._fire_partial_alert(signal, target_1r, new_sl, event_bus)
 
             for s in to_remove:
                 self._open_signals.remove(s)
@@ -562,8 +579,18 @@ class LiveStrategyRunner:
                     else:
                         m1_df = None
 
+                # Build H4 df for trend filter (same as backtest)
+                h4_df = None
+                if h4_bars:
+                    h4_df = self._bars_to_df(h4_bars)
+                    if not h4_df.empty:
+                        if h4_df["datetime"].dt.tz is None:
+                            h4_df["datetime"] = h4_df["datetime"].dt.tz_localize("UTC")
+                    else:
+                        h4_df = None
+
                 # Run same scan functions as backtest engine_v7
-                setups = _scan_dor(m5_df, m1_df) + _scan_asw(m5_df)
+                setups = _scan_dor(m5_df, m1_df, h4_df) + _scan_asw(m5_df)
 
                 # Current bar window — only fire setups from the last M5 bar
                 last_ts = m5_df.iloc[-1]["datetime"]
@@ -591,9 +618,11 @@ class LiveStrategyRunner:
                         continue
 
                     direction_str = "bearish" if setup["direction"] == "short" else "bullish"
+                    displacement = float(setup.get("displacement", 0.0))
+                    daily_open   = float(setup.get("daily_open", 0.0))
                     self._fire_dor_alert(
                         entry, sl, tp, direction_str, lots, sl_dist,
-                        0.0, 0.0, event_bus,
+                        displacement, daily_open, event_bus,
                     )
                     self._open_signals.append({
                         "entry":       entry,

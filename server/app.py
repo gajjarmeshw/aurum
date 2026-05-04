@@ -287,7 +287,11 @@ def create_app(event_bus: EventBus) -> Flask:
             m1 = _load_m1(config.BASE_DIR / "backtest" / "data")
             if m1 is not None and start_date:
                 m1 = m1[(m1["datetime"] >= s_ts) & (m1["datetime"] < e_ts)].reset_index(drop=True)
-            setups  = _scan_dor(m5, m1) + _scan_asw(m5)
+            try:
+                h4 = _load_csv(str(config.BASE_DIR / "backtest" / "data" / "XAUUSD_4h.csv"))
+            except Exception:
+                h4 = None
+            setups  = _scan_dor(m5, m1, h4) + _scan_asw(m5)
             sim_bars = m1 if m1 is not None else m5
             trades  = simulate(sim_bars, setups)
             summ    = _summary(trades)
