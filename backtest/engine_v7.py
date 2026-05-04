@@ -193,10 +193,10 @@ def _fvg_entry(m1: pd.DataFrame, t0: pd.Timestamp, is_short: bool,
 
 def _h4_trend(h4: pd.DataFrame | None, bar_time: pd.Timestamp) -> str:
     """
-    Returns 'bullish', 'bearish', or 'neutral' based on H4 structure at bar_time.
-    Uses last 5 completed H4 bars before bar_time.
-    Bullish: 3+ of last 5 H4 closes are higher than the one before them.
-    Bearish: 3+ of last 5 H4 closes are lower than the one before them.
+    Returns 'bullish', 'bearish', or 'neutral' based on H4 bar structure.
+    Uses last 5 completed H4 bars. Majority (≥60%) of closes moving in one
+    direction → that bias. Ties → neutral.
+    EMA cross was tested and blocked too many winning trades in volatile markets.
     """
     if h4 is None or h4.empty:
         return "neutral"
@@ -214,7 +214,7 @@ def _h4_trend(h4: pd.DataFrame | None, bar_time: pd.Timestamp) -> str:
     return "neutral"
 
 
-DOR_MIN_DISPLACEMENT = 30.0   # pt — minimum displacement from daily open to trigger DOR
+DOR_MIN_DISPLACEMENT = 30.0   # pt — min displacement; bar-majority H4 filter handles direction
 
 
 def _scan_dor(m5: pd.DataFrame, m1: pd.DataFrame | None = None,
@@ -581,7 +581,7 @@ def _summary(trades: list[V7Trade]) -> dict:
 
 def run(start_date: str, end_date: str, engines: list[str] | None = None,
         use_be: bool = False) -> dict:
-    engines = engines or ["DOR", "ASW"]
+    engines = engines or ["DOR"]   # ASW disabled — 9.1% WR across full backtest period
     data_dir = config.BASE_DIR / "backtest" / "data"
     m5 = _load_csv(str(data_dir / "XAUUSD_5min.csv"))
 
