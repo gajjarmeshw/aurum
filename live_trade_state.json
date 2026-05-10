@@ -1,6 +1,8 @@
 {
-  "today": "2026-04-29",
+  "today": "2026-05-09",
   "day_pnl": 0.0,
   "day_losses": 0,
+  "day_trades": 0,
+  "fired_setup_keys": [],
   "open_signals": []
 }

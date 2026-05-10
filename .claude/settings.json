@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ' *)",
+      "Bash(python -c \"import config; print\\('OANDA token set:', bool\\(config.OANDA_API_TOKEN\\)\\); print\\('Account:', config.OANDA_ACCOUNT_ID\\)\")",
+      "Bash(python -m backtest.fetch_m1_history)"
+    ]
+  }
+}

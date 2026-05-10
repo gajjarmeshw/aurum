@@ -32,8 +32,10 @@ import pandas as pd
 
 import config
 from journal import journal
+from core.calendar import get_todays_events
+from core.news_blackout import is_news_blackout
 from backtest.engine_v7 import (
-    _enrich_ist, _daily_opens, _scan_dor, _scan_asw,
+    _enrich_ist, _daily_opens, _scan_dor, _scan_orb, _scan_mr, _adx_series,
     MAX_RISK_PER_TRADE, MAX_LOSSES_PER_DAY, MAX_TRADES_PER_DAY,
     NY_START, NY_END, _size_lots,
 )
@@ -60,10 +62,14 @@ class LiveStrategyRunner:
         self._last_scalp_ts: float = 0.0
         self._alert_log: list = []         # last 50 trade events for UI feed
 
-        # DOR+ASW state — same engine as backtest
+        # 6-engine state — mirrors backtest engine_v7
         self._m5_buf: list[dict] = []
         self._fired_setup_keys: set[str] = set()   # dedup: "date|entry_time|direction"
-        self._day_trades: int = 0                  # DOR+ASW trades taken today (cap = MAX_TRADES_PER_DAY)
+        self._day_trades: int = 0                  # trades taken today (cap = MAX_TRADES_PER_DAY)
+        # Falling-knife guard — mirrors backtest DailyState.side_losses.
+        # Key = "ENGINE_direction" (e.g. "DOR_long"). After 2 same-side losses,
+        # cool that direction-engine for the rest of the day.
+        self._day_side_losses: dict[str, int] = {}
 
         self._load_state()
 
@@ -78,6 +84,7 @@ class LiveStrategyRunner:
                 self._day_pnl          = state.get("day_pnl", 0.0)
                 self._day_losses       = state.get("day_losses", 0)
                 self._day_trades       = state.get("day_trades", 0)
+                self._day_side_losses  = state.get("day_side_losses", {})
                 self._fired_setup_keys = set(state.get("fired_setup_keys", []))
                 self._open_signals     = state.get("open_signals", [])
                 logger.info(
@@ -104,6 +111,7 @@ class LiveStrategyRunner:
                 "day_pnl":           self._day_pnl,
                 "day_losses":        self._day_losses,
                 "day_trades":        self._day_trades,
+                "day_side_losses":   self._day_side_losses,
                 "fired_setup_keys":  list(self._fired_setup_keys),
                 "open_signals":      signals_clean,
             }
@@ -137,10 +145,10 @@ class LiveStrategyRunner:
             "alert_log":     self._alert_log,
         }
 
-    # ── DOR + ASW scanner ─────────────────────────────────────
+    # ── Multi-engine scanner ──────────────────────────────────
 
     def _bars_to_enriched_df(self, bars: list[dict]) -> pd.DataFrame:
-        """Convert live bar list to enriched DataFrame for DOR/ASW scanners."""
+        """Convert live bar list to enriched DataFrame for engine_v7 scanners."""
         df = self._bars_to_df(bars)
         if df.empty:
             return df
@@ -196,17 +204,6 @@ class LiveStrategyRunner:
             "date_ist":     date_ist,
         }
 
-    def _check_asw_signal(self, m5_df: pd.DataFrame) -> Optional[dict]:
-        """Return first ASW setup from current M5 data, or None."""
-        setups = _scan_asw(m5_df)
-        if not setups:
-            return None
-        latest_bar_time = m5_df.iloc[-1]["datetime"]
-        for s in reversed(setups):
-            if s["entry_time"] == latest_bar_time:
-                return s
-        return None
-
     def on_m1_close(self, m1_bars: list[dict], event_bus) -> None:
         """No-op — M1 FVG is now handled inside _scan_dor on each M5 close."""
         pass
@@ -242,6 +239,7 @@ class LiveStrategyRunner:
         self._day_pnl = 0.0
         self._day_losses = 0
         self._day_trades = 0
+        self._day_side_losses = {}
         self._last_alert_minute = -1
         self._open_signals = []
         self._pending_setup = None
@@ -323,7 +321,8 @@ class LiveStrategyRunner:
 
     def on_m5_close(self, m5_bars: list[dict], confluence: dict, ict: dict,  # noqa: PLR0912
                     event_bus, indicators=None, m1_bars: list[dict] | None = None,
-                    h4_bars: list[dict] | None = None):
+                    h4_bars: list[dict] | None = None,
+                    h1_bars: list[dict] | None = None):
         """
         Called once per M5 candle close.
         SL / TP / lot sizing mirrors simulation_core.py exactly.
@@ -530,6 +529,13 @@ class LiveStrategyRunner:
                         self._fire_sl_alert(signal, signal["sl"], loss, event_bus)
                         self._day_pnl += loss
                         self._day_losses += 1
+                        # Falling-knife guard: bump same-engine same-direction loss counter.
+                        # signal["direction"] is "bullish"/"bearish"; normalize to "long"/"short"
+                        # to match the backtest's side_losses key format (engine_v7).
+                        dir_norm = "long" if signal["direction"] == "bullish" else "short"
+                        side_key = f"{signal.get('mode','DOR')}_{dir_norm}"
+                        self._day_side_losses[side_key] = \
+                            self._day_side_losses.get(side_key, 0) + 1
                     to_remove.append(signal)
 
                 # B. Full TP hit (runner closes, only after partial)
@@ -561,7 +567,7 @@ class LiveStrategyRunner:
                 self._save_state()
                 event_bus.publish("live_trades", self.get_live_trades_state())
 
-        # ── 4. DOR+ASW — identical engine to backtest (engine_v7._scan_dor/_scan_asw) ──
+        # ── 4. DOR+ORB — identical engine to backtest (engine_v7._scan_dor/_scan_orb) ──
         self._m5_buf = m5_bars or self._m5_buf
         slot_free = len(self._open_signals) == 0 and self._pending_setup is None
 
@@ -589,14 +595,42 @@ class LiveStrategyRunner:
                     else:
                         h4_df = None
 
-                # Run same scan functions as backtest engine_v7
-                setups = _scan_dor(m5_df, m1_df, h4_df) + _scan_asw(m5_df)
+                # Build H1 ADX series for regime gate (same as backtest)
+                h1_adx = None
+                if h1_bars:
+                    h1_df = self._bars_to_df(h1_bars)
+                    if not h1_df.empty:
+                        if h1_df["datetime"].dt.tz is None:
+                            h1_df["datetime"] = h1_df["datetime"].dt.tz_localize("UTC")
+                        h1_adx = _adx_series(h1_df)
+
+                # Run default 3-engine combo (DOR+ORB+MR) — slippage-validated OOS.
+                # PB/AS/SW disabled in live until real fill data confirms slippage <1.5pt.
+                setups = (
+                    _scan_dor(m5_df, m1_df, h4_df, h1_adx)
+                    + _scan_orb(m5_df, m1_df, h4_df, h1_adx)
+                    + _scan_mr (m5_df, m1_df, h4_df, h1_adx)
+                )
 
                 # Current bar window — only fire setups from the last M5 bar
                 last_ts = m5_df.iloc[-1]["datetime"]
                 if last_ts.tzinfo is None:
                     last_ts = last_ts.tz_localize("UTC")
                 window_start = last_ts - pd.Timedelta(minutes=5)
+
+                # Drawdown circuit breaker — refuse all new entries when halted
+                from pipeline import risk_manager
+                halted, halt_reason = risk_manager.is_halted()
+                if halted:
+                    logger.info(f"All setups blocked — risk halt active: {halt_reason}")
+                    return
+
+                # Fetch today's high-impact events once per M5 close (not per-setup)
+                try:
+                    todays_events = get_todays_events()
+                except Exception as e:
+                    logger.warning(f"News calendar fetch failed: {e}")
+                    todays_events = []
 
                 for setup in setups:
                     entry_t = pd.Timestamp(setup["entry_time"])
@@ -608,6 +642,21 @@ class LiveStrategyRunner:
                     key = f"{ist_date}|{setup['entry_time']}|{setup['direction']}"
                     if key in self._fired_setup_keys:
                         continue   # already alerted this exact setup
+
+                    # Falling-knife guard: 2 same-engine same-direction losses → cool that side
+                    side_key = f"{setup['engine']}_{setup['direction']}"
+                    if self._day_side_losses.get(side_key, 0) >= 2:
+                        logger.info(f"Setup blocked — falling-knife guard ({side_key}) | {setup.get('reason','')}")
+                        self._fired_setup_keys.add(key)
+                        continue
+
+                    # News blackout: refuse new entries within ±5/+15min of high-impact event
+                    now_ist = entry_t.tz_convert(IST).to_pydatetime()
+                    blocked, reason = is_news_blackout(now_ist, todays_events)
+                    if blocked:
+                        logger.info(f"Setup blocked — {reason} | {setup.get('reason','')}")
+                        self._fired_setup_keys.add(key)   # don't re-evaluate this setup
+                        continue
 
                     entry   = float(setup["entry"])
                     sl      = float(setup["sl"])
@@ -662,6 +711,24 @@ class LiveStrategyRunner:
             })
         except Exception as e:
             logger.error(f"[Live] Journal write failed: {e}")
+        # Drawdown circuit breaker — record PnL, fire Telegram if halt triggers
+        try:
+            from pipeline import risk_manager
+            was_halted, _ = risk_manager.is_halted()
+            risk_manager.record_trade(pnl)
+            now_halted, reason = risk_manager.is_halted()
+            if now_halted and not was_halted:
+                msg = (
+                    "🛑 *RISK HALT TRIGGERED*\n\n"
+                    f"{reason}\n\n"
+                    "All new entries blocked until manual resume.\n"
+                    "Resume via: `python -m pipeline.risk_manager --resume` "
+                    "or POST `/api/risk/resume`"
+                )
+                self.bot.send_message(msg)
+                logger.error(f"RISK HALT: {reason}")
+        except Exception as e:
+            logger.error(f"[Live] Risk manager update failed: {e}")
         # Push fresh account state to dashboard
         try:
             account = journal.get_account_state()

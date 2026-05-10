@@ -1,7 +1,7 @@
 """
 FXReplay Export — generates two files for replay testing:
 
-  1. fxreplay_signals.csv  — all DOR+ASW entry signals (use as a checklist while replaying)
+  1. fxreplay_signals.csv  — all 6-engine entry signals (use as a checklist while replaying)
   2. fxreplay_trades.csv   — completed trades with entry/exit for performance review
 
 FXReplay usage:
@@ -17,11 +17,12 @@ Run:
 
 import argparse
 import pandas as pd
-from pathlib import Path
 
 import config
 from backtest.engine_v7 import (
-    _load_csv, _enrich_ist, _load_m1, _scan_dor, _scan_asw, simulate, _summary,
+    _load_csv, _enrich_ist, _load_m1, _adx_series,
+    _scan_dor, _scan_orb, _scan_mr, _scan_pb, _scan_as, _scan_sw,
+    simulate, _summary,
 )
 
 IST = config.IST
@@ -40,7 +41,24 @@ def export(start_date: str, end_date: str):
     if m1 is not None:
         m1 = m1[(m1["datetime"] >= start_ts) & (m1["datetime"] < end_ts)].reset_index(drop=True)
 
-    setups = _scan_dor(m5, m1) + _scan_asw(m5)
+    try:
+        h4 = _load_csv(str(data_dir / "XAUUSD_4h.csv"))
+    except Exception:
+        h4 = None
+    try:
+        h1 = _load_csv(str(data_dir / "XAUUSD_1h.csv"))
+        h1_adx = _adx_series(h1)
+    except Exception:
+        h1_adx = None
+
+    setups = (
+        _scan_dor(m5, m1, h4, h1_adx)
+        + _scan_orb(m5, m1, h4, h1_adx)
+        + _scan_mr (m5, m1, h4, h1_adx)
+        + _scan_pb (m5, m1, h4, h1_adx)
+        + _scan_as (m5, m1, h4, h1_adx)
+        + _scan_sw (m5, m1, h4, h1_adx)
+    )
     sim_bars = m1 if m1 is not None else m5
     trades   = simulate(sim_bars, setups)
     summary  = _summary(trades)
@@ -106,7 +124,7 @@ def export(start_date: str, end_date: str):
     # ── Console summary by engine ───────────────────────────────────────────
     print()
     print("BY ENGINE")
-    for eng in ["DOR", "ASW"]:
+    for eng in ["DOR", "ORB", "MR", "PB", "AS", "SW"]:
         et = [t for t in trades if t.engine == eng]
         if not et:
             continue

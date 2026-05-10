@@ -193,6 +193,19 @@ def create_app(event_bus: EventBus) -> Flask:
 
         return jsonify({"candles": candles, "overlays": overlays})
 
+    @app.route("/api/risk/status", methods=["GET"])
+    def risk_status():
+        """Snapshot of drawdown circuit breaker state — halt status, recent daily PnL."""
+        from pipeline import risk_manager
+        return jsonify(risk_manager.get_status())
+
+    @app.route("/api/risk/resume", methods=["POST"])
+    def risk_resume():
+        """Manually clear the risk halt. Returns the previous halt reason."""
+        from pipeline import risk_manager
+        prev = risk_manager.resume()
+        return jsonify({"resumed": True, "previous_reason": prev})
+
     @app.route("/api/psychology", methods=["POST"])
     def submit_psychology():
         """Submit the 5-question psychology pre-trade check."""
@@ -260,7 +273,7 @@ def create_app(event_bus: EventBus) -> Flask:
 
     @app.route("/api/backtest/run", methods=["POST"])
     def run_backtest():
-        """Trigger a backtest — DOR+ASW (primary) or ICT walk-forward engine."""
+        """Trigger a backtest — 6-engine (primary) or ICT walk-forward engine."""
         from backtest.walk_forward_engine import BacktestEngine, run_all_timeframes
         from backtest.simulation_core import simulate_setups
 
@@ -271,10 +284,11 @@ def create_app(event_bus: EventBus) -> Flask:
         strategy   = data.get("strategy", "dor_asw")
         data_dir   = str(config.BASE_DIR / "backtest" / "data")
 
-        # ── DOR+ASW (primary live engine) ─────────────────────────────────
+        # ── DOR+ORB+MR (primary live engine, regime-aware) ────────────────
         if strategy == "dor_asw" or tf == "all":
             from backtest.engine_v7 import (
-                _load_csv, _enrich_ist, _load_m1, _scan_dor, _scan_asw,
+                _load_csv, _enrich_ist, _load_m1,
+                _scan_dor, _scan_orb, _scan_mr, _adx_series,
                 simulate, _summary,
             )
             import pandas as _pd2
@@ -291,7 +305,18 @@ def create_app(event_bus: EventBus) -> Flask:
                 h4 = _load_csv(str(config.BASE_DIR / "backtest" / "data" / "XAUUSD_4h.csv"))
             except Exception:
                 h4 = None
-            setups  = _scan_dor(m5, m1, h4) + _scan_asw(m5)
+            try:
+                h1 = _load_csv(str(config.BASE_DIR / "backtest" / "data" / "XAUUSD_1h.csv"))
+                h1_adx = _adx_series(h1)
+            except Exception:
+                h1_adx = None
+            # Default: 3-engine combo (DOR+ORB+MR) — survives realistic slippage OOS.
+            # PB/AS/SW disabled by default; opt-in via CLI engine_v7 if needed.
+            setups = (
+                _scan_dor(m5, m1, h4, h1_adx)
+                + _scan_orb(m5, m1, h4, h1_adx)
+                + _scan_mr (m5, m1, h4, h1_adx)
+            )
             sim_bars = m1 if m1 is not None else m5
             trades  = simulate(sim_bars, setups)
             summ    = _summary(trades)
@@ -317,7 +342,7 @@ def create_app(event_bus: EventBus) -> Flask:
                 obj.setup_reason = f"{t.engine} Signal"
                 obj.exit_reason  = t.reason
                 obj.risk_factors = f"R: {round(abs(t.tp - t.entry_price) / abs(t.entry_price - t.sl), 1)}R"
-                obj.timeframe    = "M5"
+                obj.timeframe    = getattr(t, "tf", "M5")
                 trade_objs.append(obj)
 
             wins   = sum(1 for t in trades if t.result == "win")
@@ -337,7 +362,7 @@ def create_app(event_bus: EventBus) -> Flask:
                 "trades_simulated": len(trade_objs),
                 "summary":          summary,
                 "weekly_avg":       f"${total_pnl / weeks:.2f}",
-                "msg": f"DOR+ASW: {len(trade_objs)} trades | {wr} WR | ${total_pnl:.2f}",
+                "msg": f"DOR+ORB+MR (regime-tagged, slippage-adjusted): {len(trade_objs)} trades | {wr} WR | ${total_pnl:.2f}",
             })
 
         elif data.get("strategy") == "session_expansion":
@@ -468,7 +493,7 @@ def create_app(event_bus: EventBus) -> Flask:
         """Manually trigger historical data fetch for all timeframes."""
         try:
             fetch_historical_data("XAU/USD", "1min",  500)   # M1 — DOR FVG refinement
-            fetch_historical_data("XAU/USD", "5min",  5000)  # M5 — DOR+ASW primary
+            fetch_historical_data("XAU/USD", "5min",  5000)  # M5 — primary entry TF for all engines
             fetch_historical_data("XAU/USD", "15min", 5000)
             fetch_historical_data("XAU/USD", "1h",    5000)
             fetch_historical_data("XAU/USD", "4h",    2000)

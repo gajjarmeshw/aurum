@@ -41,7 +41,7 @@ MAX_RISK_TRADE2 = 15           # USD
 MAX_TRADES_PER_DAY = 6
 WEEKLY_TARGET = 300            # USD
 DAILY_SOFT_CAP = 300            # USD profit — warning
-DAILY_HARD_CAP = 1000           # USD profit — lock
+DAILY_HARD_CAP = 500            # USD profit lock — matches backtest DAILY_PROFIT_LOCK
 DAILY_LOSS_WARNING = 150        # USD — confirmation modal
 DAILY_LOSS_HARD_CAP = 500       # USD — full lock
 

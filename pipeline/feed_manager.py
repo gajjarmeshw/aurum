@@ -152,7 +152,7 @@ class FeedManager:
                 "ob":  indicators.obs_m15[-1].to_dict()  if indicators.obs_m15  else None,
             }
 
-            # DOR+ASW context for terminal display
+            # DOR context for terminal display (daily-open displacement chip)
             daily_open = None
             displacement = None
             try:
@@ -229,9 +229,10 @@ class FeedManager:
                 m5_bars = self.feed.get_all_candles("M5")
                 m1_bars = self.feed.get_all_candles("M1")
                 h4_bars = self.feed.get_all_candles("H4")
+                h1_bars = self.feed.get_all_candles("H1")
                 self.live_strategy.on_m5_close(
                     m5_bars, confluence, ict_dict, self.event_bus, indicators,
-                    m1_bars=m1_bars, h4_bars=h4_bars,
+                    m1_bars=m1_bars, h4_bars=h4_bars, h1_bars=h1_bars,
                 )
             except Exception as e:
                 logger.error(f"Live strategy error: {e}", exc_info=True)

@@ -34,7 +34,7 @@ TF_MAP = {
 }
 OANDA_GRAN = {"M1": "M1", "M5": "M5", "M15": "M15", "H1": "H1", "H4": "H4"}
 CANDLE_COUNT = 500   # bars to fetch per TF — more than enough for all indicators
-M1_CANDLE_COUNT = 300  # ~5 hours of M1 history for DOR/ASW FVG detection
+M1_CANDLE_COUNT = 300  # ~5 hours of M1 history for DOR FVG refinement
 
 
 class OandaFeed:

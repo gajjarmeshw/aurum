@@ -1,5 +1,29 @@
 [
   {
+    "type": "be_exit",
+    "time": "05/05 13:53 IST",
+    "direction": "bearish",
+    "price": 4554.07,
+    "pnl": 11.8
+  },
+  {
+    "type": "partial_tp",
+    "time": "05/05 13:17 IST",
+    "direction": "bearish",
+    "price": 4548.669999999999,
+    "new_sl": 4554.07
+  },
+  {
+    "type": "entry",
+    "time": "05/05 13:07 IST",
+    "direction": "bearish",
+    "mode": "DOR",
+    "price": 4554.57,
+    "sl": 4560.47,
+    "tp": 4529.87,
+    "lots": 0.04
+  },
+  {
     "type": "entry",
     "time": "17/04 07:05 IST",
     "direction": "bearish",
